@@ -45,7 +45,8 @@ mv V2T.app /Applications/
 
 ## Notes & limits
 
-- Files up to **90 MB** (~3 hours of Voice Memos audio) are supported in one shot.
+- fal's Scribe endpoints cap a single request at **20 minutes** of audio. Longer recordings are handled automatically: V2T splits them into overlapping ~19-minute chunks, transcribes the chunks in parallel, matches the speaker labels across chunk boundaries (using the shared overlap audio), and stitches everything into one continuous transcript.
+- If a speaker is silent for the entire overlap window between two chunks, they can occasionally come back as a new "Speaker N" in the next chunk — just give both chips the same name and the exports will read correctly.
 - Transcription cost is billed by fal.ai per audio minute; a typical 1-hour meeting costs well under a dollar.
 - Voice Memos stores recordings in `~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/` — but dragging directly from the Voice Memos app is easiest.
 
@@ -55,3 +56,4 @@ mv V2T.app /Applications/
 2. `POST https://queue.fal.run/fal-ai/elevenlabs/speech-to-text/scribe-v2` with `{ audio_url, diarize: true }`.
 3. Poll the queue status URL, then fetch the result: word-level output with `speaker_id` per word.
 4. Words are grouped into contiguous per-speaker segments for display and export.
+5. Recordings longer than 20 minutes are first split with AVFoundation into 19-minute chunks that overlap by 45 seconds; each chunk's local speaker labels are mapped onto the global ones by finding which speakers talk at the same timestamps inside the overlap, and the duplicated overlap words are cut at its midpoint.

@@ -133,11 +133,14 @@ struct ContentView: View {
 
     private var progressLabel: String {
         switch model.phase {
+        case .preparing: return "Preparing recording…"
         case .uploading: return "Uploading recording…"
         case .queued(let position):
             if let position { return "Waiting in queue (position \(position))…" }
             return "Waiting in queue…"
         case .transcribing: return "Transcribing with ElevenLabs Scribe v2…"
+        case .processingParts(let done, let total):
+            return "Transcribing long recording — part \(done) of \(total) done…"
         default: return ""
         }
     }

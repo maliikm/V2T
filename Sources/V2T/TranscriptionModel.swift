@@ -6,15 +6,18 @@ import UniformTypeIdentifiers
 final class TranscriptionModel: ObservableObject {
     enum Phase: Equatable {
         case idle
+        case preparing
         case uploading
         case queued(position: Int?)
         case transcribing
+        /// Multi-chunk flow for recordings over fal's 20-minute limit.
+        case processingParts(done: Int, total: Int)
         case done
         case failed(String)
 
         var isBusy: Bool {
             switch self {
-            case .uploading, .queued, .transcribing: return true
+            case .preparing, .uploading, .queued, .transcribing, .processingParts: return true
             default: return false
             }
         }
@@ -73,30 +76,54 @@ final class TranscriptionModel: ObservableObject {
         let tagEvents = tagAudioEvents
         let language = languageCode.trimmingCharacters(in: .whitespaces)
 
-        phase = .uploading
+        phase = .preparing
         task = Task {
+            var chunks: [AudioChunk] = []
+            defer { AudioChunker.cleanup(chunks) }
             do {
-                let contentType = Self.mimeType(for: file)
-                let remoteURL = try await client.uploadFile(at: file, contentType: contentType)
+                // Recordings over fal's 20-minute cap are split into
+                // overlapping chunks and stitched back together afterwards.
+                chunks = try await AudioChunker.chunks(for: file)
                 try Task.checkCancellation()
 
-                self.phase = .queued(position: nil)
-                let result = try await client.transcribe(
-                    audioURL: remoteURL,
-                    tagAudioEvents: tagEvents,
-                    languageCode: language.isEmpty ? nil : language
-                ) { update in
-                    Task { @MainActor in
-                        guard self.phase.isBusy else { return }
-                        switch update {
-                        case .queued(let position): self.phase = .queued(position: position)
-                        case .inProgress: self.phase = .transcribing
+                let results: [(transcription: FalTranscription, offset: Double)]
+                if chunks.count == 1, let chunk = chunks.first {
+                    self.phase = .uploading
+                    let contentType = chunk.isTemporary ? "audio/mp4" : Self.mimeType(for: file)
+                    let remoteURL = try await client.uploadFile(at: chunk.url, contentType: contentType)
+                    try Task.checkCancellation()
+
+                    self.phase = .queued(position: nil)
+                    let result = try await client.transcribe(
+                        audioURL: remoteURL,
+                        tagAudioEvents: tagEvents,
+                        languageCode: language.isEmpty ? nil : language
+                    ) { update in
+                        Task { @MainActor in
+                            guard self.phase.isBusy else { return }
+                            switch update {
+                            case .queued(let position): self.phase = .queued(position: position)
+                            case .inProgress: self.phase = .transcribing
+                            }
+                        }
+                    }
+                    results = [(result, 0)]
+                } else {
+                    self.phase = .processingParts(done: 0, total: chunks.count)
+                    results = try await client.transcribeChunks(
+                        chunks,
+                        tagAudioEvents: tagEvents,
+                        languageCode: language.isEmpty ? nil : language
+                    ) { done, total in
+                        Task { @MainActor in
+                            guard self.phase.isBusy else { return }
+                            self.phase = .processingParts(done: done, total: total)
                         }
                     }
                 }
                 try Task.checkCancellation()
 
-                self.transcript = Transcript.build(from: result, sourceFileName: file.lastPathComponent)
+                self.transcript = Transcript.build(fromChunks: results, sourceFileName: file.lastPathComponent)
                 self.phase = .done
             } catch is CancellationError {
                 // reset()/cancel() already handled state

@@ -162,6 +162,39 @@ struct FalClient {
         throw FalError.timeout
     }
 
+    /// Uploads and transcribes several chunks concurrently, reporting how
+    /// many have finished. Results are returned in chunk order with each
+    /// chunk's time offset into the original recording.
+    func transcribeChunks(
+        _ chunks: [AudioChunk],
+        tagAudioEvents: Bool,
+        languageCode: String?,
+        onProgress: @escaping @Sendable (Int, Int) -> Void
+    ) async throws -> [(transcription: FalTranscription, offset: Double)] {
+        let total = chunks.count
+        return try await withThrowingTaskGroup(of: (Int, FalTranscription).self) { group in
+            for (index, chunk) in chunks.enumerated() {
+                group.addTask {
+                    let remoteURL = try await self.uploadFile(at: chunk.url, contentType: "audio/mp4")
+                    let result = try await self.transcribe(
+                        audioURL: remoteURL,
+                        tagAudioEvents: tagAudioEvents,
+                        languageCode: languageCode
+                    ) { _ in }
+                    return (index, result)
+                }
+            }
+            var collected: [(Int, FalTranscription)] = []
+            for try await item in group {
+                collected.append(item)
+                onProgress(collected.count, total)
+            }
+            return collected
+                .sorted { $0.0 < $1.0 }
+                .map { (transcription: $0.1, offset: chunks[$0.0].offset) }
+        }
+    }
+
     // MARK: - Helpers
 
     private func request<T: Decodable>(_ request: URLRequest) async throws -> T {
