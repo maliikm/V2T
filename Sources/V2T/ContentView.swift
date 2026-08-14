@@ -108,6 +108,15 @@ struct ContentView: View {
             Label(file.lastPathComponent, systemImage: "doc.badge.ellipsis")
                 .font(.headline)
             if !model.phase.isBusy {
+                Picker("Speakers in this recording:", selection: $model.numSpeakers) {
+                    Text("Auto-detect").tag(0)
+                    ForEach(2...16, id: \.self) { count in
+                        Text("\(count)").tag(count)
+                    }
+                }
+                .frame(maxWidth: 300)
+                .help("Setting the real number of people speaking makes the speaker labels much more accurate than auto-detection.")
+
                 Button {
                     model.startTranscription()
                 } label: {

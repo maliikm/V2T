@@ -29,11 +29,20 @@ struct SettingsView: View {
             }
 
             Section {
+                Picker("Default speaker count", selection: $model.numSpeakers) {
+                    Text("Auto-detect").tag(0)
+                    ForEach(2...16, id: \.self) { count in
+                        Text("\(count)").tag(count)
+                    }
+                }
                 Toggle("Tag audio events (laughter, applause…)", isOn: $model.tagAudioEvents)
                 TextField("Language code (optional)", text: $model.languageCode, prompt: Text("auto-detect"))
                     .help("ISO code like \"eng\" or \"spa\". Leave empty to auto-detect.")
             } header: {
                 Text("Transcription")
+            } footer: {
+                Text("Setting the real number of speakers markedly improves who-said-what accuracy.")
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

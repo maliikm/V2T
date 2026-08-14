@@ -30,6 +30,9 @@ final class TranscriptionModel: ObservableObject {
     @Published var speakerNames: [String: String] = [:]
     @Published var tagAudioEvents = false
     @Published var languageCode = ""
+    /// Expected number of speakers; 0 = auto-detect. Passing the real count
+    /// to the diarizer substantially improves speaker label accuracy.
+    @Published var numSpeakers = 0
     @Published var copiedFeedback = false
 
     private var task: Task<Void, Never>?
@@ -75,6 +78,7 @@ final class TranscriptionModel: ObservableObject {
         let client = FalClient(apiKey: apiKey)
         let tagEvents = tagAudioEvents
         let language = languageCode.trimmingCharacters(in: .whitespaces)
+        let speakers = numSpeakers > 1 ? numSpeakers : nil
 
         phase = .preparing
         task = Task {
@@ -97,7 +101,8 @@ final class TranscriptionModel: ObservableObject {
                     let result = try await client.transcribe(
                         audioURL: remoteURL,
                         tagAudioEvents: tagEvents,
-                        languageCode: language.isEmpty ? nil : language
+                        languageCode: language.isEmpty ? nil : language,
+                        numSpeakers: speakers
                     ) { update in
                         Task { @MainActor in
                             guard self.phase.isBusy else { return }
@@ -113,7 +118,8 @@ final class TranscriptionModel: ObservableObject {
                     results = try await client.transcribeChunks(
                         chunks,
                         tagAudioEvents: tagEvents,
-                        languageCode: language.isEmpty ? nil : language
+                        languageCode: language.isEmpty ? nil : language,
+                        numSpeakers: speakers
                     ) { done, total in
                         Task { @MainActor in
                             guard self.phase.isBusy else { return }

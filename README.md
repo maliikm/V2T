@@ -30,7 +30,8 @@ mv V2T.app /Applications/
 
 1. First launch: paste your fal.ai API key (get one at [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys)). It's stored in your Keychain.
 2. **Drag a memo straight out of the Voice Memos app** into the window (or click *Choose File…* — m4a, mp3, wav, and most other formats work).
-3. Click **Transcribe**. The app uploads the file, runs Scribe v2 with diarization, and shows the transcript grouped into speaker turns with timestamps.
+3. **Set the number of speakers** if you know it (you usually do for a meeting) — this makes who-said-what labeling much more accurate than auto-detection.
+4. Click **Transcribe**. The app uploads the file, runs Scribe v2 with diarization, and shows the transcript grouped into speaker turns with timestamps.
 4. **Rename speakers**: click a speaker chip at the top (e.g. "Speaker 1") and type the person's real name — the transcript and exports update everywhere.
 5. Share with Claude:
    - **Copy for Claude** — copies the transcript as Markdown with a short header, ready to paste into a Claude conversation for summarization, action items, etc.

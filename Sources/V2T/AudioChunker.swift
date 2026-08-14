@@ -15,8 +15,9 @@ enum AudioChunker {
     /// Chunk length, safely under fal's 1200 s cap.
     static let maxChunkDuration: Double = 1140
     /// Consecutive chunks share this much audio so speaker labels can be
-    /// matched across the chunk boundary.
-    static let overlap: Double = 45
+    /// matched across the chunk boundary. Two minutes gives the matcher
+    /// enough co-occurring speech to identify speakers reliably.
+    static let overlap: Double = 120
 
     static func duration(of url: URL) async throws -> Double {
         let asset = AVURLAsset(url: url)

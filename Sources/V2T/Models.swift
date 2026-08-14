@@ -164,23 +164,33 @@ struct Transcript {
         let globalWindow = globalWords.filter { $0.end > overlapStart && $0.start < overlapEnd && !$0.isEvent }
         guard !localWindow.isEmpty, !globalWindow.isEmpty else { return [:] }
 
-        let globalSpeakers = Set(globalWindow.map(\.speaker))
-        var mapping: [String: String] = [:]
+        // Score every (local, global) pairing by seconds of co-occurring
+        // speech, then assign greedily one-to-one so two different people
+        // can't collapse into the same label.
+        var pairs: [(local: String, global: String, seconds: Double)] = []
         for local in Set(localWindow.map(\.speaker)) {
             let localSpeech = localWindow.filter { $0.speaker == local }
-            var best: (speaker: String, seconds: Double)?
-            for global in globalSpeakers {
+            for global in Set(globalWindow.map(\.speaker)) {
                 let globalSpeech = globalWindow.filter { $0.speaker == global }
                 let seconds = overlapSeconds(localSpeech, globalSpeech)
-                if seconds > (best?.seconds ?? 0) {
-                    best = (global, seconds)
+                if seconds >= 2.0 {
+                    pairs.append((local, global, seconds))
                 }
             }
-            // Require a meaningful amount of co-occurring speech before
-            // declaring two labels the same person.
-            if let best, best.seconds >= 1.0 {
-                mapping[local] = best.speaker
-            }
+        }
+        pairs.sort { $0.seconds > $1.seconds }
+
+        var mapping: [String: String] = [:]
+        var usedGlobals: Set<String> = []
+        for pair in pairs where mapping[pair.local] == nil && !usedGlobals.contains(pair.global) {
+            mapping[pair.local] = pair.global
+            usedGlobals.insert(pair.global)
+        }
+        // Second pass: a local speaker with strong overlap against an
+        // already-claimed global label is likely the same person whom the
+        // diarizer split in two — fold them in rather than minting a new one.
+        for pair in pairs where mapping[pair.local] == nil && pair.seconds >= 5.0 {
+            mapping[pair.local] = pair.global
         }
         return mapping
     }

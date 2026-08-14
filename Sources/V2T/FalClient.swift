@@ -116,6 +116,7 @@ struct FalClient {
         audioURL: String,
         tagAudioEvents: Bool,
         languageCode: String?,
+        numSpeakers: Int?,
         onUpdate: @escaping (QueueUpdate) -> Void
     ) async throws -> FalTranscription {
         var input: [String: Any] = [
@@ -125,6 +126,11 @@ struct FalClient {
         ]
         if let languageCode, !languageCode.isEmpty {
             input["language_code"] = languageCode
+        }
+        // Telling the diarizer how many voices to expect markedly improves
+        // speaker label accuracy versus auto-detection.
+        if let numSpeakers, numSpeakers > 1 {
+            input["num_speakers"] = numSpeakers
         }
 
         var submit = URLRequest(url: URL(string: "https://queue.fal.run/\(Self.endpointId)")!)
@@ -169,6 +175,7 @@ struct FalClient {
         _ chunks: [AudioChunk],
         tagAudioEvents: Bool,
         languageCode: String?,
+        numSpeakers: Int?,
         onProgress: @escaping @Sendable (Int, Int) -> Void
     ) async throws -> [(transcription: FalTranscription, offset: Double)] {
         let total = chunks.count
@@ -179,7 +186,8 @@ struct FalClient {
                     let result = try await self.transcribe(
                         audioURL: remoteURL,
                         tagAudioEvents: tagAudioEvents,
-                        languageCode: languageCode
+                        languageCode: languageCode,
+                        numSpeakers: numSpeakers
                     ) { _ in }
                     return (index, result)
                 }
