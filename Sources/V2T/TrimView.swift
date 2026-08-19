@@ -25,6 +25,8 @@ struct TrimView: View {
     @State private var previewPlayer: AVAudioPlayer?
     @State private var isPreviewPlaying = false
     @State private var hasEdits = false
+    /// Retained strongly here because AVAudioPlayer.delegate is weak.
+    @State private var previewDelegate = PreviewDelegate()
 
     var body: some View {
         VStack(spacing: 16) {
@@ -160,15 +162,19 @@ struct TrimView: View {
     }
 
     private func togglePreview() {
-        if isPreviewPlaying {
+        // Trust the player, not the flag: at the natural end the player stops
+        // itself, so a stale flag must fall through to the play branch.
+        if isPreviewPlaying, previewPlayer?.isPlaying == true {
             previewPlayer?.pause()
             isPreviewPlaying = false
             return
         }
         if previewPlayer == nil {
             previewPlayer = try? AVAudioPlayer(contentsOf: currentAudioURL)
+            previewPlayer?.delegate = previewDelegate
             previewPlayer?.prepareToPlay()
         }
+        previewDelegate.onFinish = { isPreviewPlaying = false }
         previewPlayer?.play()
         isPreviewPlaying = true
     }
@@ -193,6 +199,18 @@ struct TrimView: View {
             try? FileManager.default.removeItem(at: workingURL)
         }
         workingURL = nil
+    }
+}
+
+/// Bridges AVAudioPlayer's end-of-playback callback to a closure, so the
+/// preview button's state can reset when the audio finishes on its own.
+final class PreviewDelegate: NSObject, AVAudioPlayerDelegate {
+    var onFinish: (() -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onFinish?()
+        }
     }
 }
 

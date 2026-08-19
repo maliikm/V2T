@@ -16,7 +16,7 @@ struct WaveformView: View {
                     playhead(size: geometry.size)
                 } else {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(.quaternary.opacity(0.4))
+                        .fill(Color.secondary.opacity(0.15))
                     if data == nil {
                         ProgressView().controlSize(.small)
                             .frame(maxWidth: .infinity)
@@ -42,14 +42,15 @@ struct WaveformView: View {
             let gap: CGFloat = 1
             let step = barWidth + gap
             let barCount = max(1, Int(canvasSize.width / step))
-            let samplesPerBar = max(1, samples.count / barCount)
             let playedX = canvasSize.width * progress
             let midY = canvasSize.height / 2
 
             for barIndex in 0..<barCount {
-                let start = barIndex * samplesPerBar
+                // Proportional mapping so every bar covers its time-share of
+                // the samples and the last bar ends exactly at the last sample.
+                let start = barIndex * samples.count / barCount
                 guard start < samples.count else { break }
-                let end = min(start + samplesPerBar, samples.count)
+                let end = min(max(start + 1, (barIndex + 1) * samples.count / barCount), samples.count)
                 var peak: Float = 0
                 for i in start..<end { peak = max(peak, samples[i]) }
                 let amplitude = max(0.03, CGFloat(peak))

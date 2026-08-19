@@ -82,7 +82,11 @@ struct TranscriptPane: View {
 
     private var speakersBinding: Binding<Int> {
         Binding(
-            get: { store.recording(with: recording.id)?.numSpeakersHint ?? 0 },
+            // Show the effective value: the recording's own setting if made,
+            // otherwise the global default that would actually be sent.
+            get: {
+                store.recording(with: recording.id)?.numSpeakersHint ?? settings.defaultNumSpeakers
+            },
             set: { store.setNumSpeakersHint($0, for: recording.id) }
         )
     }
@@ -137,7 +141,7 @@ struct TranscriptPane: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(.quaternary.opacity(0.5), in: Capsule())
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
                     }
                 }
             }

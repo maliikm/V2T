@@ -61,7 +61,9 @@ final class TranscriptionManager: ObservableObject {
         let audioURL = store.audioURL(for: recording)
         let tagEvents = settings.tagAudioEvents
         let language = settings.languageCode.trimmingCharacters(in: .whitespaces)
-        let hint = recording.numSpeakersHint > 1 ? recording.numSpeakersHint : settings.defaultNumSpeakers
+        // Per-recording choice wins outright (including an explicit 0 =
+        // auto-detect); the global default applies only when never set.
+        let hint = recording.numSpeakersHint ?? settings.defaultNumSpeakers
         let numSpeakers = hint > 1 ? hint : nil
         let fileName = recording.title
 
@@ -116,14 +118,10 @@ final class TranscriptionManager: ObservableObject {
                 self.active[id] = nil
                 self.tasks[id] = nil
             } catch is CancellationError {
-                self.active[id] = nil
-                self.tasks[id] = nil
+                // cancel(_:) already cleared this run's entries; a restarted
+                // run may own them now, so don't touch the dictionaries here.
             } catch {
-                if Task.isCancelled {
-                    self.active[id] = nil
-                    self.tasks[id] = nil
-                    return
-                }
+                if Task.isCancelled { return } // same: cancel() already cleaned up
                 self.errors[id] = error.localizedDescription
                 self.active[id] = nil
                 self.tasks[id] = nil

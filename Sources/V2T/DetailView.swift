@@ -224,12 +224,16 @@ struct DetailView: View {
         guard let current = store.recording(with: recording.id) else { return }
         let url = store.audioURL(for: current)
         player.load(recordingID: current.id, url: url)
-        waveform = try? await WaveformLoader.load(
+        let loaded = try? await WaveformLoader.load(
             audioURL: url,
             cacheURL: store.waveformCacheURL(for: current.id)
         )
-        if let waveform {
-            player.silentRanges = WaveformLoader.silentRanges(in: waveform)
+        // The user may have switched recordings while the waveform computed;
+        // don't overwrite the newer selection's data with this stale result.
+        guard !Task.isCancelled, player.currentRecordingID == current.id else { return }
+        waveform = loaded
+        if let loaded {
+            player.silentRanges = WaveformLoader.silentRanges(in: loaded)
         }
     }
 

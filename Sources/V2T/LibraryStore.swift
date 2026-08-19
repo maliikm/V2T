@@ -203,26 +203,51 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Swaps in edited audio (after trim), invalidating the now-stale
-    /// transcript and waveform cache.
+    /// transcript and waveform cache. Ordered so a failure at any step can
+    /// never leave the recording without its original audio: the new file is
+    /// staged inside the library folder first, the old audio is moved aside
+    /// (not deleted) until the swap succeeds.
     func replaceAudio(for id: UUID, with newFileURL: URL, duration: Double) {
         guard var recording = recording(with: id) else { return }
         let folder = folderURL(for: id)
         let destination = folder.appendingPathComponent("audio.m4a")
+        let staging = folder.appendingPathComponent("audio.m4a.new")
+        let backup = folder.appendingPathComponent("audio.m4a.old")
+        let fm = FileManager.default
+        let oldURL = audioURL(for: recording)
         do {
-            let oldURL = audioURL(for: recording)
-            try? FileManager.default.removeItem(at: oldURL)
-            if FileManager.default.fileExists(atPath: destination.path) && destination != oldURL {
-                try FileManager.default.removeItem(at: destination)
+            // 1. Get the new audio onto the library volume (the risky step —
+            //    possibly cross-volume). Old audio untouched if it throws.
+            try? fm.removeItem(at: staging)
+            try fm.moveItem(at: newFileURL, to: staging)
+
+            // 2. Move the old audio aside (same-directory rename).
+            try? fm.removeItem(at: backup)
+            if fm.fileExists(atPath: oldURL.path) {
+                try fm.moveItem(at: oldURL, to: backup)
             }
-            try FileManager.default.moveItem(at: newFileURL, to: destination)
+
+            // 3. Final same-directory rename into place; restore on failure.
+            do {
+                if fm.fileExists(atPath: destination.path) {
+                    try fm.removeItem(at: destination)
+                }
+                try fm.moveItem(at: staging, to: destination)
+            } catch {
+                try? fm.moveItem(at: backup, to: oldURL)
+                try? fm.removeItem(at: staging)
+                throw error
+            }
+            try? fm.removeItem(at: backup)
+
             recording.audioFileName = "audio.m4a"
             recording.duration = duration
             recording.hasTranscript = false
             update(recording)
             transcriptCache[id] = nil
             searchTextCache[id] = nil
-            try? FileManager.default.removeItem(at: transcriptURL(for: id))
-            try? FileManager.default.removeItem(at: waveformCacheURL(for: id))
+            try? fm.removeItem(at: transcriptURL(for: id))
+            try? fm.removeItem(at: waveformCacheURL(for: id))
         } catch {
             lastError = "Couldn't apply the edit: \(error.localizedDescription)"
         }

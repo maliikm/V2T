@@ -14,6 +14,9 @@ final class RecorderController: NSObject, ObservableObject {
     private var tempURL: URL?
     private weak var store: LibraryStore?
     private var onFinished: ((Recording) -> Void)?
+    /// Guards the async gap between the record click and the microphone
+    /// permission response, so a double-click can't start two recorders.
+    private var isStarting = false
 
     func toggle(store: LibraryStore, onFinished: ((Recording) -> Void)? = nil) {
         if isRecording {
@@ -24,15 +27,18 @@ final class RecorderController: NSObject, ObservableObject {
     }
 
     func start(store: LibraryStore, onFinished: ((Recording) -> Void)? = nil) {
-        guard !isRecording else { return }
+        guard !isRecording, !isStarting else { return }
+        isStarting = true
         self.store = store
         self.onFinished = onFinished
         Task {
+            defer { self.isStarting = false }
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
             guard granted else {
                 self.lastError = "Microphone access is off. Enable it in System Settings → Privacy & Security → Microphone."
                 return
             }
+            guard self.recorder == nil else { return }
             self.beginRecording()
         }
     }
@@ -74,19 +80,27 @@ final class RecorderController: NSObject, ObservableObject {
     }
 
     private func finishedWriting(successfully: Bool) {
-        defer {
-            recorder = nil
-            tempURL = nil
-        }
-        guard successfully, let tempURL, let store else {
+        // The recording can also end without stop() being called (encoder or
+        // disk error), so reset ALL state here unconditionally.
+        // `elapsed` is fresh in both paths: stop() captured it, and the
+        // 0.1s timer kept it current if the recorder ended on its own.
+        let finishedTempURL = tempURL
+        let finishedElapsed = elapsed
+        let callback = onFinished
+        recorder = nil
+        tempURL = nil
+        onFinished = nil
+        isRecording = false
+        stopTimer()
+
+        guard successfully, let finishedTempURL, let store else {
             if !successfully { lastError = "Recording failed to save." }
             return
         }
-        let recording = store.addRecordedFile(at: tempURL, duration: elapsed, startedAt: startedAt)
+        let recording = store.addRecordedFile(at: finishedTempURL, duration: finishedElapsed, startedAt: startedAt)
         if let recording {
-            onFinished?(recording)
+            callback?(recording)
         }
-        onFinished = nil
     }
 
     private func startTimer() {

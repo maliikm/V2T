@@ -12,8 +12,10 @@ struct Recording: Identifiable, Codable, Equatable {
     var hasTranscript: Bool
     /// User-assigned real names per diarized speaker id.
     var speakerNames: [String: String]
-    /// Expected number of speakers for transcription; 0 = auto-detect.
-    var numSpeakersHint: Int
+    /// Expected number of speakers for transcription.
+    /// nil = not set (fall back to the global default), 0 = force auto-detect,
+    /// >= 2 = force that count.
+    var numSpeakersHint: Int?
 
     init(
         id: UUID = UUID(),
@@ -24,7 +26,7 @@ struct Recording: Identifiable, Codable, Equatable {
         audioFileName: String,
         hasTranscript: Bool = false,
         speakerNames: [String: String] = [:],
-        numSpeakersHint: Int = 0
+        numSpeakersHint: Int? = nil
     ) {
         self.id = id
         self.title = title
