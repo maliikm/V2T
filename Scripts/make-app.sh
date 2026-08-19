@@ -37,6 +37,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>V2T records voice memos with your microphone.</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
 </dict>

@@ -1,9 +1,18 @@
-# V2T — Voice to Text for Mac
+# V2T — Voice Memos with real transcription
 
-A small native macOS app that turns meeting recordings (e.g. from **Apple Voice Memos**) into accurate, speaker-labeled transcripts you can paste straight into Claude.
+A native macOS app modeled on Apple Voice Memos, with one big upgrade: recordings are transcribed with **speaker diarization** (who said what) using [ElevenLabs Scribe v2](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) via the fal.ai API, and every transcript is one click away from being pasted into Claude.
 
-- **Model:** [ElevenLabs Scribe v2](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) via the fal.ai API — currently the most accurate speech-to-text available on fal, with built-in **speaker diarization** (who said what), word-level timestamps, and 90+ language support.
-- **Privacy:** audio is uploaded to fal.ai storage only for transcription; your API key lives in the macOS Keychain.
+## Features
+
+- **Recording library** — sidebar of all recordings with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
+- **Record** — red record button at the bottom of the sidebar captures AAC m4a (48 kHz), just like Voice Memos.
+- **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
+- **Playback** — waveform with seek, playhead, big time counter, ±15 s skip, play/pause.
+- **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
+- **Search** — the search field matches titles *and* transcript text.
+- **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled segments with timestamps; renameable speaker chips; double-click a segment to jump playback there; the current segment highlights and follows during playback.
+- **Trim editor** — select a range on the waveform, then **Trim** (keep selection) or **Delete** (remove selection); Apply/Cancel commit semantics like Voice Memos.
+- **Share & export** — share the audio file, copy the transcript as Markdown ready for Claude, copy plain text, or save a `.md`.
 
 ## Requirements
 
@@ -14,47 +23,34 @@ A small native macOS app that turns meeting recordings (e.g. from **Apple Voice 
 ## Run it
 
 ```bash
-git clone https://github.com/maliikm/v2t.git
-cd v2t
+git clone https://github.com/maliikm/V2T.git
+cd V2T
 swift run
 ```
 
-Or build a double-clickable app bundle:
+Or build a double-clickable app bundle (recommended, especially for microphone permission):
 
 ```bash
 ./Scripts/make-app.sh
 mv V2T.app /Applications/
 ```
 
-## Usage
+Set your fal.ai API key in **Settings (⌘,)**.
 
-1. First launch: paste your fal.ai API key (get one at [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys)). It's stored in your Keychain.
-2. **Drag a memo straight out of the Voice Memos app** into the window (or click *Choose File…* — m4a, mp3, wav, and most other formats work).
-3. **Set the number of speakers** if you know it (you usually do for a meeting) — this makes who-said-what labeling much more accurate than auto-detection.
-4. Click **Transcribe**. The app uploads the file, runs Scribe v2 with diarization, and shows the transcript grouped into speaker turns with timestamps.
-4. **Rename speakers**: click a speaker chip at the top (e.g. "Speaker 1") and type the person's real name — the transcript and exports update everywhere.
-5. Share with Claude:
-   - **Copy for Claude** — copies the transcript as Markdown with a short header, ready to paste into a Claude conversation for summarization, action items, etc.
-   - **Copy Text** — plain text.
-   - **Save…** — writes a `.md` file.
+## Transcription accuracy
 
-## Settings (⌘,)
+- The model is ElevenLabs **Scribe v2** on fal — the most accurate speech-to-text on fal, with built-in diarization.
+- **Set the number of speakers** (per recording in the transcript pane, or a default in Settings). A known speaker count is far more reliable than auto-detection.
+- fal's Scribe endpoints cap a single request at 20 minutes, so longer recordings are split into ~19-minute chunks overlapping by 2 minutes, transcribed in parallel, and stitched back together; speaker labels are matched across boundaries using the overlap. If someone is silent through an entire overlap window they can come back as a new "Speaker N" — give both chips the same name and exports read correctly.
+- Editing audio (trim/delete) invalidates the transcript; re-transcribe from the transcript pane.
 
-- fal.ai API key
-- Tag audio events (laughter, applause) — off by default
-- Language code hint (e.g. `eng`) — leave empty for auto-detect
+## Costs
 
-## Notes & limits
+Transcription is billed by fal.ai per audio minute; a typical 1-hour meeting costs well under a dollar. Recording, playback, editing, and search are all local and free.
 
-- fal's Scribe endpoints cap a single request at **20 minutes** of audio. Longer recordings are handled automatically: V2T splits them into overlapping ~19-minute chunks, transcribes the chunks in parallel, matches the speaker labels across chunk boundaries (using the shared overlap audio), and stitches everything into one continuous transcript.
-- If a speaker is silent for the entire overlap window between two chunks, they can occasionally come back as a new "Speaker N" in the next chunk — just give both chips the same name and the exports will read correctly.
-- Transcription cost is billed by fal.ai per audio minute; a typical 1-hour meeting costs well under a dollar.
-- Voice Memos stores recordings in `~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/` — but dragging directly from the Voice Memos app is easiest.
+## How transcription works
 
-## How it works
-
-1. `POST https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → `PUT` the audio file to the returned upload URL.
-2. `POST https://queue.fal.run/fal-ai/elevenlabs/speech-to-text/scribe-v2` with `{ audio_url, diarize: true }`.
-3. Poll the queue status URL, then fetch the result: word-level output with `speaker_id` per word.
-4. Words are grouped into contiguous per-speaker segments for display and export.
-5. Recordings longer than 20 minutes are first split with AVFoundation into 19-minute chunks that overlap by 45 seconds; each chunk's local speaker labels are mapped onto the global ones by finding which speakers talk at the same timestamps inside the overlap, and the duplicated overlap words are cut at its midpoint.
+1. `POST https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → `PUT` the audio to the returned upload URL.
+2. `POST https://queue.fal.run/fal-ai/elevenlabs/speech-to-text/scribe-v2` with `{ audio_url, diarize: true, num_speakers }`.
+3. Poll the queue status URL, fetch the word-level result (`speaker_id` per word), and group words into per-speaker segments.
+4. Recordings over 20 minutes are split with AVFoundation first; chunk-local speaker labels are mapped onto global ones by matching who talks at the same timestamps inside the 2-minute overlaps, then the duplicated overlap is cut at its midpoint.

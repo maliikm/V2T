@@ -30,12 +30,16 @@ struct FalTranscription: Decodable {
 // MARK: - Speaker-grouped transcript
 
 /// One contiguous run of speech by a single speaker.
-struct TranscriptSegment: Identifiable {
-    let id = UUID()
+struct TranscriptSegment: Identifiable, Codable, Equatable {
+    var id = UUID()
     let speakerId: String
     let start: Double
     var end: Double
     var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case speakerId, start, end, text
+    }
 }
 
 /// A word with absolute (whole-recording) timestamps and a globally
@@ -48,12 +52,22 @@ private struct TimedWord {
     var speaker: String
 }
 
-struct Transcript {
+struct Transcript: Codable, Equatable {
     let sourceFileName: String
     let languageCode: String?
     let segments: [TranscriptSegment]
     /// Speaker ids in order of first appearance.
     let speakerIds: [String]
+
+    /// Segment containing (or most recently before) the given playback time.
+    func segmentIndex(at time: Double) -> Int? {
+        guard !segments.isEmpty else { return nil }
+        var candidate: Int?
+        for (index, segment) in segments.enumerated() {
+            if segment.start <= time { candidate = index } else { break }
+        }
+        return candidate ?? 0
+    }
 
     static func build(from result: FalTranscription, sourceFileName: String) -> Transcript {
         build(fromChunks: [(result, 0)], sourceFileName: sourceFileName)
@@ -236,6 +250,18 @@ struct Transcript {
 // MARK: - Formatting
 
 enum TranscriptFormatter {
+    /// "MM:SS.cc" like Voice Memos' big playback counter.
+    static func clock(_ seconds: Double) -> String {
+        let clamped = max(0, seconds)
+        let total = Int(clamped)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        let hundredths = Int((clamped - Double(total)) * 100)
+        if h > 0 { return String(format: "%d:%02d:%02d.%02d", h, m, s, hundredths) }
+        return String(format: "%02d:%02d.%02d", m, s, hundredths)
+    }
+
     static func timestamp(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         let h = total / 3600
