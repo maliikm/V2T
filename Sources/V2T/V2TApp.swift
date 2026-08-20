@@ -28,6 +28,7 @@ struct V2TApp: App {
 }
 
 struct MainWindow: View {
+    @EnvironmentObject var recorder: RecorderController
     @State private var selection: UUID?
 
     var body: some View {
@@ -35,7 +36,11 @@ struct MainWindow: View {
             SidebarView(selection: $selection)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
         } detail: {
-            DetailView(recordingID: selection)
+            if recorder.isRecording {
+                RecordingSessionView()
+            } else {
+                DetailView(recordingID: selection)
+            }
         }
     }
 }

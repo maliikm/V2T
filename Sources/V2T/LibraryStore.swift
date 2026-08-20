@@ -137,15 +137,21 @@ final class LibraryStore: ObservableObject {
 
     /// Moves a freshly captured recording (from RecorderController) into the library.
     @discardableResult
-    func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date) -> Recording? {
+    func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date, title: String? = nil) -> Recording? {
         let id = UUID()
         let folder = folderURL(for: id)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let destination = folder.appendingPathComponent("audio.m4a")
             try FileManager.default.moveItem(at: tempURL, to: destination)
+            let resolvedTitle: String
+            if let title, !title.trimmingCharacters(in: .whitespaces).isEmpty {
+                resolvedTitle = title
+            } else {
+                resolvedTitle = nextRecordingTitle()
+            }
             let recording = Recording(
-                id: id, title: nextRecordingTitle(), createdAt: startedAt,
+                id: id, title: resolvedTitle, createdAt: startedAt,
                 duration: duration, audioFileName: "audio.m4a"
             )
             insert(recording)
