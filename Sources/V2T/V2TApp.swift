@@ -8,9 +8,10 @@ struct V2TApp: App {
     @StateObject private var player = AudioPlayerController()
     @StateObject private var recorder = RecorderController()
     @StateObject private var transcriber = TranscriptionManager()
+    @StateObject private var appAudio = AppAudioRecorder()
 
     var body: some Scene {
-        WindowGroup("V2T") {
+        WindowGroup("V2T", id: "main") {
             MainWindow()
                 .environmentObject(store)
                 .environmentObject(settings)
@@ -18,6 +19,14 @@ struct V2TApp: App {
                 .environmentObject(recorder)
                 .environmentObject(transcriber)
                 .frame(minWidth: 860, minHeight: 560)
+        }
+
+        MenuBarExtra("V2T", systemImage: appAudio.isRecording ? "record.circle.fill" : "waveform.circle") {
+            MenuBarView()
+                .environmentObject(appAudio)
+                .environmentObject(store)
+                .environmentObject(settings)
+                .environmentObject(transcriber)
         }
 
         Settings {
@@ -78,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // The menu bar item keeps working with the window closed.
+        false
     }
 }
