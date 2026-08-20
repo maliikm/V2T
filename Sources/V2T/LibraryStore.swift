@@ -1,6 +1,19 @@
 import Foundation
 import AVFoundation
 
+/// A user-created folder in the library.
+struct RecordingFolder: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+}
+
+/// What the folder sidebar has selected.
+enum FolderSelection: Hashable {
+    case all
+    case favorites
+    case folder(UUID)
+}
+
 /// Owns the on-disk recording library and the in-memory list.
 ///
 /// Layout: `~/Library/Application Support/V2T/Library/<uuid>/`
@@ -12,6 +25,7 @@ import AVFoundation
 final class LibraryStore: ObservableObject {
     /// Newest first.
     @Published private(set) var recordings: [Recording] = []
+    @Published private(set) var folders: [RecordingFolder] = []
     @Published var lastError: String?
 
     let rootURL: URL
@@ -24,6 +38,7 @@ final class LibraryStore: ObservableObject {
         rootURL = appSupport.appendingPathComponent("V2T/Library", isDirectory: true)
         try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         reload()
+        loadFolders()
     }
 
     // MARK: - Paths
@@ -71,13 +86,89 @@ final class LibraryStore: ObservableObject {
         return recordings.first { $0.id == id }
     }
 
+    // MARK: - Folders
+
+    private var foldersURL: URL {
+        rootURL.deletingLastPathComponent().appendingPathComponent("folders.json")
+    }
+
+    private func loadFolders() {
+        guard let data = try? Data(contentsOf: foldersURL),
+              let loaded = try? Self.decoder.decode([RecordingFolder].self, from: data) else {
+            return
+        }
+        folders = loaded
+    }
+
+    private func saveFolders() {
+        if let data = try? Self.encoder.encode(folders) {
+            try? data.write(to: foldersURL, options: .atomic)
+        }
+    }
+
+    func folder(with id: UUID) -> RecordingFolder? {
+        folders.first { $0.id == id }
+    }
+
+    @discardableResult
+    func createFolder(named name: String) -> RecordingFolder? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let folder = RecordingFolder(id: UUID(), name: trimmed)
+        folders.append(folder)
+        saveFolders()
+        return folder
+    }
+
+    func renameFolder(_ id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[index].name = trimmed
+        saveFolders()
+    }
+
+    /// Removes the folder; its recordings stay in the library (top level).
+    func deleteFolder(_ id: UUID) {
+        for recording in recordings where recording.folderID == id {
+            var updated = recording
+            updated.folderID = nil
+            update(updated)
+        }
+        folders.removeAll { $0.id == id }
+        saveFolders()
+    }
+
+    func move(_ recordingID: UUID, toFolder folderID: UUID?) {
+        guard var recording = recording(with: recordingID) else { return }
+        recording.folderID = folderID
+        update(recording)
+    }
+
+    func recordingCount(in selection: FolderSelection) -> Int {
+        switch selection {
+        case .all: return recordings.count
+        case .favorites: return recordings.filter(\.isFavorite).count
+        case .folder(let id): return recordings.filter { $0.folderID == id }.count
+        }
+    }
+
     // MARK: - Search
 
-    /// Filters by title and transcript text, like Voice Memos' "Titles, Transcripts" search.
-    func filtered(search: String) -> [Recording] {
+    /// Filters by folder, then by title and transcript text, like Voice
+    /// Memos' "Titles, Transcripts" search.
+    func filtered(search: String, folder: FolderSelection = .all) -> [Recording] {
+        let base: [Recording]
+        switch folder {
+        case .all:
+            base = recordings
+        case .favorites:
+            base = recordings.filter(\.isFavorite)
+        case .folder(let id):
+            base = recordings.filter { $0.folderID == id }
+        }
         let query = search.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return recordings }
-        return recordings.filter { recording in
+        guard !query.isEmpty else { return base }
+        return base.filter { recording in
             if recording.title.localizedCaseInsensitiveContains(query) { return true }
             guard recording.hasTranscript else { return false }
             return transcriptSearchText(for: recording).localizedCaseInsensitiveContains(query)

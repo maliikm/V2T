@@ -1,9 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// "All Recordings" list with search, context menus, drag-and-drop import,
-/// and the red record button pinned at the bottom.
-struct SidebarView: View {
+/// The permanent recordings-list column: search, context menus,
+/// drag-and-drop import, and the red record button pinned at the bottom.
+/// Shows the recordings of whichever folder is selected in the (collapsible)
+/// folder sidebar.
+struct RecordingsListView: View {
     @EnvironmentObject var store: LibraryStore
     @EnvironmentObject var recorder: RecorderController
     @EnvironmentObject var transcriber: TranscriptionManager
@@ -11,6 +13,7 @@ struct SidebarView: View {
     @EnvironmentObject var player: AudioPlayerController
 
     @Binding var selection: UUID?
+    let folder: FolderSelection
     @State private var searchText = ""
     @State private var showingImporter = false
     @State private var renameTarget: Recording?
@@ -19,15 +22,15 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(store.filtered(search: searchText)) { recording in
+            ForEach(store.filtered(search: searchText, folder: folder)) { recording in
                 RecordingRow(recording: recording, isTranscribing: transcriber.isBusy(recording.id))
                     .tag(recording.id)
                     .contextMenu { contextMenu(for: recording) }
             }
         }
-        .listStyle(.sidebar)
-        .searchable(text: $searchText, placement: .sidebar, prompt: "Titles, Transcripts")
-        .navigationTitle("All Recordings")
+        .listStyle(.inset)
+        .searchable(text: $searchText, prompt: "Titles, Transcripts")
+        .navigationTitle(listTitle)
         .safeAreaInset(edge: .bottom) { recordBar }
         .toolbar {
             ToolbarItem {
@@ -85,6 +88,20 @@ struct SidebarView: View {
         }
     }
 
+    private var listTitle: String {
+        switch folder {
+        case .all: return "All Recordings"
+        case .favorites: return "Favorites"
+        case .folder(let id): return store.folder(with: id)?.name ?? "Folder"
+        }
+    }
+
+    /// The folder new recordings and imports land in.
+    private var targetFolderID: UUID? {
+        if case .folder(let id) = folder { return id }
+        return nil
+    }
+
     // MARK: - Row actions
 
     @ViewBuilder
@@ -95,6 +112,21 @@ struct SidebarView: View {
         Button("Rename…") {
             renameTarget = recording
             renameText = recording.title
+        }
+        if !store.folders.isEmpty {
+            Menu("Move to Folder") {
+                Button("None (All Recordings)") {
+                    store.move(recording.id, toFolder: nil)
+                }
+                .disabled(recording.folderID == nil)
+                Divider()
+                ForEach(store.folders) { folder in
+                    Button(folder.name) {
+                        store.move(recording.id, toFolder: folder.id)
+                    }
+                    .disabled(recording.folderID == folder.id)
+                }
+            }
         }
         if !recording.hasTranscript && !transcriber.isBusy(recording.id) {
             Button("Transcribe") {
@@ -120,7 +152,11 @@ struct SidebarView: View {
     private func importFiles(_ urls: [URL]) {
         Task {
             for url in urls {
-                if let recording = await store.importAudio(from: url) {
+                if var recording = await store.importAudio(from: url) {
+                    if let targetFolderID {
+                        store.move(recording.id, toFolder: targetFolderID)
+                        recording.folderID = targetFolderID
+                    }
                     selection = recording.id
                     if settings.autoTranscribe && settings.hasAPIKey {
                         transcriber.transcribe(recording, store: store, settings: settings)
@@ -158,7 +194,11 @@ struct SidebarView: View {
                         .foregroundStyle(.red)
                 }
                 Button {
+                    let folderID = targetFolderID
                     recorder.toggle(store: store) { recording in
+                        if let folderID {
+                            store.move(recording.id, toFolder: folderID)
+                        }
                         selection = recording.id
                         if settings.autoTranscribe && settings.hasAPIKey {
                             transcriber.transcribe(recording, store: store, settings: settings)

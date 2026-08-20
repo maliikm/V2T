@@ -29,18 +29,38 @@ struct V2TApp: App {
 
 struct MainWindow: View {
     @EnvironmentObject var recorder: RecorderController
+    @EnvironmentObject var store: LibraryStore
+    /// Folder column starts hidden, like Voice Memos; the toolbar's sidebar
+    /// button reveals it.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
+    @State private var folderSelection: FolderSelection? = .all
     @State private var selection: UUID?
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(selection: $selection)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            FolderSidebarView(selection: $folderSelection)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 215, max: 280)
+        } content: {
+            RecordingsListView(selection: $selection, folder: folderSelection ?? .all)
+                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 400)
         } detail: {
             if recorder.isRecording {
                 RecordingSessionView()
             } else {
                 DetailView(recordingID: selection)
             }
+        }
+        .onChange(of: folderSelection) { newValue in
+            // Deselect a recording that isn't in the newly chosen folder.
+            guard let selectedID = selection,
+                  let recording = store.recording(with: selectedID) else { return }
+            let stillVisible: Bool
+            switch newValue ?? .all {
+            case .all: stillVisible = true
+            case .favorites: stillVisible = recording.isFavorite
+            case .folder(let id): stillVisible = recording.folderID == id
+            }
+            if !stillVisible { selection = nil }
         }
     }
 }

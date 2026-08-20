@@ -4,7 +4,8 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 
 ## Features
 
-- **Recording library** — sidebar of all recordings with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
+- **Recording library** — a permanent recordings-list column with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
+- **Folders** — a collapsible folder sidebar (toolbar sidebar button) with All Recordings, Favorites, and your own folders: create, rename, delete, and move recordings between them; new recordings land in the folder you're viewing.
 - **Record** — red record button at the bottom of the sidebar captures AAC m4a (48 kHz), just like Voice Memos.
 - **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
 - **Playback** — waveform with seek, playhead, big time counter, ±15 s skip, play/pause.

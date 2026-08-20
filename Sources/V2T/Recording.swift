@@ -10,6 +10,8 @@ struct Recording: Identifiable, Codable, Equatable {
     var isFavorite: Bool
     var audioFileName: String
     var hasTranscript: Bool
+    /// Folder this recording lives in; nil = top level (All Recordings only).
+    var folderID: UUID?
     /// User-assigned real names per diarized speaker id.
     var speakerNames: [String: String]
     /// Expected number of speakers for transcription.
@@ -25,6 +27,7 @@ struct Recording: Identifiable, Codable, Equatable {
         isFavorite: Bool = false,
         audioFileName: String,
         hasTranscript: Bool = false,
+        folderID: UUID? = nil,
         speakerNames: [String: String] = [:],
         numSpeakersHint: Int? = nil
     ) {
@@ -35,6 +38,7 @@ struct Recording: Identifiable, Codable, Equatable {
         self.isFavorite = isFavorite
         self.audioFileName = audioFileName
         self.hasTranscript = hasTranscript
+        self.folderID = folderID
         self.speakerNames = speakerNames
         self.numSpeakersHint = numSpeakersHint
     }
