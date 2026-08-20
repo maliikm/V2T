@@ -30,6 +30,7 @@ struct V2TApp: App {
 struct MainWindow: View {
     @EnvironmentObject var recorder: RecorderController
     @EnvironmentObject var store: LibraryStore
+    @EnvironmentObject var player: AudioPlayerController
     /// Folder column starts hidden, like Voice Memos; the toolbar's sidebar
     /// button reveals it.
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
@@ -49,6 +50,9 @@ struct MainWindow: View {
             } else {
                 DetailView(recordingID: selection)
             }
+        }
+        .onAppear {
+            SpaceKeyPlaybackMonitor.install(player: player, recorder: recorder)
         }
         .onChange(of: folderSelection) { newValue in
             // Deselect a recording that isn't in the newly chosen folder.

@@ -52,12 +52,24 @@ private struct TimedWord {
     var speaker: String
 }
 
+/// A single word with absolute timing, persisted so transcripts can be
+/// re-segmented (or word-highlighted) later without re-transcribing.
+struct TranscriptWord: Codable, Equatable {
+    let text: String
+    let start: Double
+    let end: Double
+    let speakerId: String
+    let isEvent: Bool
+}
+
 struct Transcript: Codable, Equatable {
     let sourceFileName: String
     let languageCode: String?
     let segments: [TranscriptSegment]
     /// Speaker ids in order of first appearance.
     let speakerIds: [String]
+    /// Word-level timing; nil on transcripts saved before this field existed.
+    let words: [TranscriptWord]?
 
     /// Segment containing (or most recently before) the given playback time.
     func segmentIndex(at time: Double) -> Int? {
@@ -92,7 +104,7 @@ struct Transcript: Codable, Equatable {
                 .joined(separator: " ")
             let segment = TranscriptSegment(speakerId: "speaker_0", start: 0, end: 0, text: text)
             return Transcript(sourceFileName: sourceFileName, languageCode: language,
-                              segments: [segment], speakerIds: ["speaker_0"])
+                              segments: [segment], speakerIds: ["speaker_0"], words: nil)
         }
 
         var globalWords: [TimedWord] = []
@@ -135,7 +147,11 @@ struct Transcript: Codable, Equatable {
             sourceFileName: sourceFileName,
             languageCode: language,
             segments: makeSegments(globalWords),
-            speakerIds: appearanceOrder(globalWords)
+            speakerIds: appearanceOrder(globalWords),
+            words: globalWords.map {
+                TranscriptWord(text: $0.text, start: $0.start, end: $0.end,
+                               speakerId: $0.speaker, isEvent: $0.isEvent)
+            }
         )
     }
 
@@ -220,12 +236,19 @@ struct Transcript: Codable, Equatable {
         return total
     }
 
+    /// Groups words into segments, breaking not only on speaker changes but
+    /// also inside long single-speaker stretches — at speech pauses and
+    /// sentence ends — so each block stays a precise click-to-seek target.
     private static func makeSegments(_ words: [TimedWord]) -> [TranscriptSegment] {
         var segments: [TranscriptSegment] = []
         var current: TranscriptSegment?
+        var lastWordEnd: Double = 0
+
         for word in words {
             let piece = word.isEvent ? "[\(word.text.trimmingCharacters(in: CharacterSet(charactersIn: "()[]")))]" : word.text
-            if var segment = current, segment.speakerId == word.speaker {
+            if var segment = current,
+               segment.speakerId == word.speaker,
+               !shouldSplit(segment, before: word, lastWordEnd: lastWordEnd) {
                 segment.text += " " + piece
                 segment.end = max(segment.end, word.end)
                 current = segment
@@ -233,9 +256,26 @@ struct Transcript: Codable, Equatable {
                 if let finished = current { segments.append(finished) }
                 current = TranscriptSegment(speakerId: word.speaker, start: word.start, end: word.end, text: piece)
             }
+            lastWordEnd = word.end
         }
         if let finished = current { segments.append(finished) }
         return segments.filter { !$0.text.isEmpty }
+    }
+
+    private static let sentenceEnders: Set<Character> = [".", "?", "!", "…"]
+
+    /// Whether to close the running segment before appending the next word
+    /// of the same speaker.
+    private static func shouldSplit(_ segment: TranscriptSegment, before word: TimedWord, lastWordEnd: Double) -> Bool {
+        let duration = lastWordEnd - segment.start
+        let gap = word.start - lastWordEnd
+        // A real pause in speech makes a natural block boundary.
+        if gap >= 1.5 && duration >= 6 { return true }
+        // Comfortable maximum: break at the next sentence end.
+        if duration >= 25, let last = segment.text.last, sentenceEnders.contains(last) { return true }
+        // Hard maximum: break even mid-sentence.
+        if duration >= 45 { return true }
+        return false
     }
 
     private static func appearanceOrder(_ words: [TimedWord]) -> [String] {

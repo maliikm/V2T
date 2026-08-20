@@ -168,29 +168,50 @@ struct TranscriptPane: View {
             for: segment.speakerId, names: names, order: transcript.speakerIds
         )
         let isCurrent = currentSegmentIndex(transcript) == index
+        // Long turns are split into several blocks; repeat the speaker
+        // header only when the speaker actually changes.
+        let isNewSpeaker = index == 0 || transcript.segments[index - 1].speakerId != segment.speakerId
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Text(name)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(color(forSpeakerIndex: speakerIndex))
+                if isNewSpeaker {
+                    Circle()
+                        .fill(color(forSpeakerIndex: speakerIndex))
+                        .frame(width: 7, height: 7)
+                    Text(name)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(color(forSpeakerIndex: speakerIndex))
+                }
                 Text(TranscriptFormatter.timestamp(segment.start))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Text(segment.text)
-                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(isCurrent ? Color.accentColor.opacity(0.12) : Color.clear)
         )
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
+        // Single click moves the playhead here; playback continues (or the
+        // next press of Space / Play starts) from this block.
+        .onTapGesture {
             player.seek(to: segment.start)
         }
+        .contextMenu {
+            Button("Play from Here") {
+                player.seek(to: segment.start)
+                if !player.isPlaying { player.play() }
+            }
+            Button("Copy Text") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(segment.text, forType: .string)
+            }
+        }
+        .help("Click to move playback here")
     }
 
     private func currentSegmentIndex(_ transcript: Transcript) -> Int? {

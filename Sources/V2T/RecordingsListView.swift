@@ -128,8 +128,8 @@ struct RecordingsListView: View {
                 }
             }
         }
-        if !recording.hasTranscript && !transcriber.isBusy(recording.id) {
-            Button("Transcribe") {
+        if !transcriber.isBusy(recording.id) {
+            Button(recording.hasTranscript ? "Re-transcribe" : "Transcribe") {
                 transcriber.transcribe(recording, store: store, settings: settings)
             }
         }

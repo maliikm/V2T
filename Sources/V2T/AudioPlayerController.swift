@@ -141,6 +141,29 @@ final class AudioPlayerController: NSObject, ObservableObject {
     }
 }
 
+/// App-wide space-bar play/pause. A local key monitor (rather than a menu
+/// shortcut) so typing a space in any text field still works: events are
+/// passed through whenever a text view has keyboard focus.
+@MainActor
+enum SpaceKeyPlaybackMonitor {
+    private static var installed = false
+
+    static func install(player: AudioPlayerController, recorder: RecorderController) {
+        guard !installed else { return }
+        installed = true
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.keyCode == 49, // space
+                  event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  !(NSApp.keyWindow?.firstResponder is NSTextView),
+                  !recorder.isRecording,
+                  player.currentRecordingID != nil
+            else { return event }
+            player.togglePlay()
+            return nil
+        }
+    }
+}
+
 extension AudioPlayerController: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in

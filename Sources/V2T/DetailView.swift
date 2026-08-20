@@ -40,11 +40,14 @@ struct DetailView: View {
                 TranscriptPane(recording: recording)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                WaveformView(data: waveform, progress: progressFraction) { fraction in
-                    player.seek(to: fraction * player.duration)
+                ZoomedWaveformView(
+                    data: waveform,
+                    currentTime: player.currentTime,
+                    duration: player.duration > 0 ? player.duration : recording.duration
+                ) { time in
+                    player.seek(to: time)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 24)
                 .padding(.vertical, 16)
             }
 
@@ -102,13 +105,11 @@ struct DetailView: View {
 
     private func bottomControls(_ recording: Recording) -> some View {
         VStack(spacing: 10) {
-            if showTranscript {
-                WaveformView(data: waveform, progress: progressFraction) { fraction in
-                    player.seek(to: fraction * player.duration)
-                }
-                .frame(height: 56)
-                .padding(.horizontal, 24)
+            WaveformView(data: waveform, progress: progressFraction) { fraction in
+                player.seek(to: fraction * player.duration)
             }
+            .frame(height: 56)
+            .padding(.horizontal, 24)
             HStack {
                 Text("0:00")
                 Spacer()
@@ -193,9 +194,12 @@ struct DetailView: View {
             Button {
                 showTranscript.toggle()
             } label: {
-                Label("Transcript", systemImage: "quote.bubble")
+                Label(
+                    showTranscript ? "Waveform" : "Transcript",
+                    systemImage: showTranscript ? "waveform" : "quote.bubble"
+                )
             }
-            .help(showTranscript ? "Show waveform" : "Show transcript")
+            .help(showTranscript ? "Show the zoomed waveform" : "Show the transcript")
 
             if recording.hasTranscript {
                 Menu {

@@ -8,10 +8,10 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 - **Folders** — a collapsible folder sidebar (toolbar sidebar button) with All Recordings, Favorites, and your own folders: create, rename, delete, and move recordings between them; new recordings land in the folder you're viewing.
 - **Record** — red record button at the bottom of the sidebar captures AAC m4a (48 kHz), just like Voice Memos.
 - **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
-- **Playback** — waveform with seek, playhead, big time counter, ±15 s skip, play/pause.
+- **Playback** — overview waveform with click-to-seek, a zoomed scrubbing waveform view (toggle with the waveform/transcript toolbar button; drag it to scrub), big time counter, ±15 s skip, play/pause, and **Space** to play/pause anywhere (except while typing in a text field).
 - **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
 - **Search** — the search field matches titles *and* transcript text.
-- **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled segments with timestamps; renameable speaker chips; double-click a segment to jump playback there; the current segment highlights and follows during playback.
+- **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled blocks with timestamps; long single-speaker turns are split at pauses and sentence ends so every block is a precise seek target; renameable speaker chips; **click any block to move playback there** (right-click for Play from Here / Copy Text); the current block highlights and follows during playback. Word-level timing is stored with each transcript. Recordings transcribed before this feature keep their coarse blocks — right-click → Re-transcribe to upgrade them.
 - **Trim editor** — select a range on the waveform, then **Trim** (keep selection) or **Delete** (remove selection); Apply/Cancel commit semantics like Voice Memos.
 - **Share & export** — share the audio file, copy the transcript as Markdown ready for Claude, copy plain text, or save a `.md`.
 
