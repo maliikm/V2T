@@ -10,13 +10,23 @@ struct WaveformData: Codable, Equatable {
 /// Decodes an audio file into a fixed number of RMS buckets for drawing,
 /// caching the result next to the recording.
 enum WaveformLoader {
-    static let bucketCount = 1200
+    /// Time-based density so the zoomed view (~80 pt/s, one bar per ~0.04 s)
+    /// gets at least one bucket per bar even on hour-long recordings; a
+    /// fixed total count made long files render as solid blocks when zoomed.
+    static let bucketsPerSecond: Double = 25
+    static let maxBuckets = 250_000
+
+    static func expectedBucketCount(for duration: Double) -> Int {
+        Int(min(Double(maxBuckets), max(200, duration * bucketsPerSecond)))
+    }
 
     static func load(audioURL: URL, cacheURL: URL?) async throws -> WaveformData {
         if let cacheURL,
            let data = try? Data(contentsOf: cacheURL),
            let cached = try? JSONDecoder().decode(WaveformData.self, from: data),
-           !cached.samples.isEmpty {
+           !cached.samples.isEmpty,
+           // Recompute caches written at the old, coarser density.
+           cached.samples.count >= expectedBucketCount(for: cached.duration) / 2 {
             return cached
         }
         let computed = try await Task.detached(priority: .userInitiated) {
@@ -36,6 +46,7 @@ enum WaveformLoader {
             return WaveformData(samples: [], duration: 0)
         }
         let duration = Double(totalFrames) / format.sampleRate
+        let bucketCount = expectedBucketCount(for: duration)
         let framesPerBucket = max(1, Int(totalFrames) / bucketCount)
         let channelCount = Int(format.channelCount)
 

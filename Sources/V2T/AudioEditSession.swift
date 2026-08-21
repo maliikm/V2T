@@ -22,11 +22,21 @@ final class AudioEditSession: NSObject, ObservableObject {
     @Published var selectionStart: Double = 0
     @Published var selectionEnd: Double = 1
 
+    /// The kinds of edits applied so far — pure time edits allow the stored
+    /// transcript to be retimed on commit instead of thrown away.
+    private enum EditOp {
+        case trim(ClosedRange<Double>)
+        case delete(ClosedRange<Double>)
+        case replace
+    }
+
     private var recordingID: UUID?
     private var originalURL: URL?
     /// nil while the audio is still the untouched original.
     private var workingURL: URL?
     private var undoStack: [URL?] = []
+    /// One entry per undo step, in the same order.
+    private var ops: [EditOp] = []
     private var tempFiles: Set<URL> = []
     private weak var player: AudioPlayerController?
 
@@ -48,6 +58,7 @@ final class AudioEditSession: NSObject, ObservableObject {
         self.player = player
         workingURL = nil
         undoStack = []
+        ops = []
         tempFiles = []
         workingDuration = recording.duration
         workingWaveform = initialWaveform
@@ -67,13 +78,32 @@ final class AudioEditSession: NSObject, ObservableObject {
         if isReplacing { cancelReplace() }
         if commit, let final = workingURL, let id = recordingID {
             tempFiles.remove(final)
-            store.replaceAudio(for: id, with: final, duration: workingDuration)
+            // Trim/Delete are pure time edits — the transcript survives by
+            // retiming. Replace/Resume changes content, so it invalidates.
+            let editOps = ops
+            let hasReplace = editOps.contains { if case .replace = $0 { return true } else { return false } }
+            let transform: ((Transcript) -> Transcript)?
+            if editOps.isEmpty || hasReplace {
+                transform = nil
+            } else {
+                transform = { transcript in
+                    editOps.reduce(transcript) { partial, op in
+                        switch op {
+                        case .trim(let range): return partial.retimed(keepingOnly: range)
+                        case .delete(let range): return partial.retimed(removing: range)
+                        case .replace: return partial
+                        }
+                    }
+                }
+            }
+            store.replaceAudio(for: id, with: final, duration: workingDuration, transcriptTransform: transform)
         }
         for file in tempFiles {
             try? FileManager.default.removeItem(at: file)
         }
         tempFiles = []
         undoStack = []
+        ops = []
         workingURL = nil
         originalURL = nil
         recordingID = nil
@@ -89,6 +119,7 @@ final class AudioEditSession: NSObject, ObservableObject {
 
     func undo() {
         guard !isProcessing, !isReplacing, let previous = undoStack.popLast() else { return }
+        if !ops.isEmpty { ops.removeLast() }
         if let discarded = workingURL {
             tempFiles.remove(discarded)
             try? FileManager.default.removeItem(at: discarded)
@@ -99,8 +130,9 @@ final class AudioEditSession: NSObject, ObservableObject {
         Task { await refreshDerived(seekTo: keepTime) }
     }
 
-    private func pushWorking(_ url: URL) {
+    private func pushWorking(_ url: URL, op: EditOp) {
         undoStack.append(workingURL)
+        ops.append(op)
         workingURL = url
         tempFiles.insert(url)
         canUndo = true
@@ -133,7 +165,7 @@ final class AudioEditSession: NSObject, ObservableObject {
                 isProcessing = false
                 return
             }
-            pushWorking(result)
+            pushWorking(result, op: keepSelection ? .trim(range) : .delete(range))
             selectionStart = 0
             selectionEnd = 1
             await refreshDerived(seekTo: keepSelection ? 0 : range.lowerBound)
@@ -231,7 +263,7 @@ final class AudioEditSession: NSObject, ObservableObject {
                     )
                 }
                 try? FileManager.default.removeItem(at: temp)
-                self.pushWorking(result)
+                self.pushWorking(result, op: .replace)
                 await self.refreshDerived(seekTo: insertAt + additionDuration)
             } catch {
                 self.error = error.localizedDescription

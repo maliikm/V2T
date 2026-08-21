@@ -299,13 +299,24 @@ final class LibraryStore: ObservableObject {
         try? FileManager.default.removeItem(at: folderURL(for: id))
     }
 
-    /// Swaps in edited audio (after trim), invalidating the now-stale
-    /// transcript and waveform cache. Ordered so a failure at any step can
-    /// never leave the recording without its original audio: the new file is
-    /// staged inside the library folder first, the old audio is moved aside
-    /// (not deleted) until the swap succeeds.
-    func replaceAudio(for id: UUID, with newFileURL: URL, duration: Double) {
+    /// Swaps in edited audio (after trim), invalidating the waveform cache.
+    /// When `transcriptTransform` is provided (pure time edits: trim/delete),
+    /// the stored transcript is retimed and kept; otherwise it is
+    /// invalidated. Ordered so a failure at any step can never leave the
+    /// recording without its original audio: the new file is staged inside
+    /// the library folder first, the old audio is moved aside (not deleted)
+    /// until the swap succeeds.
+    func replaceAudio(
+        for id: UUID,
+        with newFileURL: URL,
+        duration: Double,
+        transcriptTransform: ((Transcript) -> Transcript)? = nil
+    ) {
         guard var recording = recording(with: id) else { return }
+        // Read before any cache/file invalidation below.
+        let preservedTranscript: Transcript? = transcriptTransform.flatMap { transform in
+            transcript(for: id).map(transform)
+        }
         let folder = folderURL(for: id)
         let destination = folder.appendingPathComponent("audio.m4a")
         let staging = folder.appendingPathComponent("audio.m4a.new")
@@ -339,12 +350,17 @@ final class LibraryStore: ObservableObject {
 
             recording.audioFileName = "audio.m4a"
             recording.duration = duration
-            recording.hasTranscript = false
-            update(recording)
             transcriptCache[id] = nil
             searchTextCache[id] = nil
-            try? fm.removeItem(at: transcriptURL(for: id))
             try? fm.removeItem(at: waveformCacheURL(for: id))
+            if let preservedTranscript, !preservedTranscript.segments.isEmpty {
+                update(recording)
+                saveTranscript(preservedTranscript, for: id)
+            } else {
+                recording.hasTranscript = false
+                update(recording)
+                try? fm.removeItem(at: transcriptURL(for: id))
+            }
         } catch {
             lastError = "Couldn't apply the edit: \(error.localizedDescription)"
         }

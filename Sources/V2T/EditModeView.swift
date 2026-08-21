@@ -30,7 +30,12 @@ struct EditModeView: View {
                 TrimSelectionView(
                     waveform: session.workingWaveform,
                     selectionStart: $session.selectionStart,
-                    selectionEnd: $session.selectionEnd
+                    selectionEnd: $session.selectionEnd,
+                    progress: progressFraction,
+                    onSeek: { fraction in
+                        guard !session.isReplacing else { return }
+                        player.seek(to: fraction * session.workingDuration)
+                    }
                 )
                 .frame(height: 56)
                 .padding(.horizontal, 24)
@@ -181,10 +186,17 @@ struct EditModeView: View {
 }
 
 /// Waveform with the yellow selection band and drag handles (the trim tool).
+/// Clicking the strip outside the handles seeks playback, so a cut can be
+/// auditioned before committing; the playhead is drawn for orientation.
 struct TrimSelectionView: View {
     let waveform: WaveformData?
     @Binding var selectionStart: Double
     @Binding var selectionEnd: Double
+    var progress: Double = 0
+    var onSeek: ((Double) -> Void)?
+
+    /// Handles can't cross: minimum selection width as a fraction.
+    private let minimumSelection: Double = 0.01
 
     var body: some View {
         GeometryReader { geometry in
@@ -193,24 +205,27 @@ struct TrimSelectionView: View {
             let endX = CGFloat(max(selectionStart, selectionEnd)) * width
 
             ZStack(alignment: .leading) {
-                WaveformView(data: waveform, progress: 0, onSeek: nil)
-                    .allowsHitTesting(false)
+                WaveformView(data: waveform, progress: progress, onSeek: onSeek)
 
                 Rectangle()
                     .fill(Color.yellow.opacity(0.18))
                     .frame(width: max(0, endX - startX))
                     .offset(x: startX)
+                    .allowsHitTesting(false)
 
                 RoundedRectangle(cornerRadius: 4)
                     .strokeBorder(Color.yellow, lineWidth: 2.5)
                     .frame(width: max(8, endX - startX))
                     .offset(x: startX)
+                    .allowsHitTesting(false)
 
                 handle(at: startX, height: geometry.size.height) { locationX in
-                    selectionStart = clampedFraction(locationX, width: width)
+                    let fraction = clampedFraction(locationX, width: width)
+                    selectionStart = max(0, min(fraction, selectionEnd - minimumSelection))
                 }
                 handle(at: endX, height: geometry.size.height) { locationX in
-                    selectionEnd = clampedFraction(locationX, width: width)
+                    let fraction = clampedFraction(locationX, width: width)
+                    selectionEnd = min(1, max(fraction, selectionStart + minimumSelection))
                 }
             }
             .coordinateSpace(name: "trimSelection")

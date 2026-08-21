@@ -25,6 +25,7 @@ final class AudioPlayerController: NSObject, ObservableObject {
     var silentRanges: [ClosedRange<Double>] = []
 
     private var player: AVAudioPlayer?
+    private var loadedURL: URL?
     private var timer: Timer?
 
     override init() {
@@ -38,7 +39,10 @@ final class AudioPlayerController: NSObject, ObservableObject {
     // MARK: - Loading
 
     func load(recordingID: UUID, url: URL) {
-        guard currentRecordingID != recordingID else { return }
+        // Also compare the URL: after an edit the same recording's audio is a
+        // DIFFERENT file, and an id-only guard would keep playing the old one
+        // through the still-open handle.
+        guard currentRecordingID != recordingID || loadedURL != url else { return }
         unload()
         currentRecordingID = recordingID
         do {
@@ -48,10 +52,12 @@ final class AudioPlayerController: NSObject, ObservableObject {
             player.delegate = self
             player.prepareToPlay()
             self.player = player
+            loadedURL = url
             duration = player.duration
             currentTime = 0
         } catch {
             player = nil
+            loadedURL = nil
             duration = 0
             currentTime = 0
         }
@@ -61,6 +67,7 @@ final class AudioPlayerController: NSObject, ObservableObject {
         stopTimer()
         player?.stop()
         player = nil
+        loadedURL = nil
         isPlaying = false
         currentTime = 0
         duration = 0

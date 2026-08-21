@@ -287,6 +287,83 @@ struct Transcript: Codable, Equatable {
     }
 }
 
+// MARK: - Retiming after audio edits
+
+extension Transcript {
+    /// Transcript adjusted for an audio edit that kept only `range`:
+    /// words outside are dropped, the rest shift to start at zero.
+    func retimed(keepingOnly range: ClosedRange<Double>) -> Transcript {
+        retimed(wordMap: { word in
+            let mid = (word.start + word.end) / 2
+            guard mid >= range.lowerBound, mid <= range.upperBound else { return nil }
+            let start = max(0, word.start - range.lowerBound)
+            let end = max(start, min(word.end, range.upperBound) - range.lowerBound)
+            return TranscriptWord(text: word.text, start: start, end: end, speakerId: word.speakerId, isEvent: word.isEvent)
+        }, segmentFallback: { segment in
+            let mid = (segment.start + segment.end) / 2
+            guard mid >= range.lowerBound, mid <= range.upperBound else { return nil }
+            let start = max(0, segment.start - range.lowerBound)
+            let end = max(start, min(segment.end, range.upperBound) - range.lowerBound)
+            return TranscriptSegment(speakerId: segment.speakerId, start: start, end: end, text: segment.text)
+        })
+    }
+
+    /// Transcript adjusted for an audio edit that removed `range`:
+    /// words inside are dropped, later words shift earlier by its length.
+    func retimed(removing range: ClosedRange<Double>) -> Transcript {
+        let cut = range.upperBound - range.lowerBound
+        return retimed(wordMap: { word in
+            let mid = (word.start + word.end) / 2
+            if mid >= range.lowerBound, mid <= range.upperBound { return nil }
+            if word.start >= range.upperBound {
+                return TranscriptWord(text: word.text, start: word.start - cut, end: word.end - cut, speakerId: word.speakerId, isEvent: word.isEvent)
+            }
+            return TranscriptWord(text: word.text, start: word.start, end: min(word.end, range.lowerBound), speakerId: word.speakerId, isEvent: word.isEvent)
+        }, segmentFallback: { segment in
+            let mid = (segment.start + segment.end) / 2
+            if mid >= range.lowerBound, mid <= range.upperBound { return nil }
+            if segment.start >= range.upperBound {
+                return TranscriptSegment(speakerId: segment.speakerId, start: segment.start - cut, end: segment.end - cut, text: segment.text)
+            }
+            return TranscriptSegment(speakerId: segment.speakerId, start: segment.start, end: min(segment.end, range.lowerBound), text: segment.text)
+        })
+    }
+
+    /// Word-accurate when word timing is stored (transcripts made since
+    /// words were persisted); otherwise falls back to shifting whole
+    /// segments, which keeps timing right but can't split segment text.
+    private func retimed(
+        wordMap: (TranscriptWord) -> TranscriptWord?,
+        segmentFallback: (TranscriptSegment) -> TranscriptSegment?
+    ) -> Transcript {
+        if let words, !words.isEmpty {
+            let newWords = words.compactMap(wordMap)
+            let timed = newWords.map {
+                TimedWord(text: $0.text, start: $0.start, end: $0.end, isEvent: $0.isEvent, speaker: $0.speakerId)
+            }
+            return Transcript(
+                sourceFileName: sourceFileName,
+                languageCode: languageCode,
+                segments: Transcript.makeSegments(timed),
+                speakerIds: Transcript.appearanceOrder(timed),
+                words: newWords
+            )
+        }
+        let newSegments = segments.compactMap(segmentFallback)
+        var order: [String] = []
+        for segment in newSegments where !order.contains(segment.speakerId) {
+            order.append(segment.speakerId)
+        }
+        return Transcript(
+            sourceFileName: sourceFileName,
+            languageCode: languageCode,
+            segments: newSegments,
+            speakerIds: order.isEmpty ? speakerIds : order,
+            words: nil
+        )
+    }
+}
+
 // MARK: - Formatting
 
 enum TranscriptFormatter {
