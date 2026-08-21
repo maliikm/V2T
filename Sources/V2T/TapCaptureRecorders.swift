@@ -78,11 +78,25 @@ final class ProcessTapRecorder {
 
     /// The block installed as the aggregate device's IO proc. Runs on the
     /// Core Audio IO queue — copy the buffer and get out fast.
+    ///
+    /// The tap's advertised ASBD can DISAGREE with the buffer layout the
+    /// aggregate actually delivers (seen in the field: interleaved-stereo
+    /// ASBD, planar buffers — which halves the frame count and chipmunks
+    /// the whole recording). The real layout is resolved from the first
+    /// buffer list instead of trusted blindly.
     func makeIOBlock(tapFormat: AVAudioFormat) -> AudioDeviceIOBlock {
+        var resolvedFormat: AVAudioFormat? // touched only on the serial IO queue
         return { [weak self] _, inInputData, inInputTime, _, _ in
             guard let self, !self.isPaused else { return }
+            let format: AVAudioFormat
+            if let resolvedFormat {
+                format = resolvedFormat
+            } else {
+                format = Self.resolveFormat(declared: tapFormat, bufferList: inInputData)
+                resolvedFormat = format
+            }
             guard let source = AVAudioPCMBuffer(
-                pcmFormat: tapFormat,
+                pcmFormat: format,
                 bufferListNoCopy: inInputData,
                 deallocator: nil
             ), source.frameLength > 0 else { return }
@@ -162,6 +176,34 @@ final class ProcessTapRecorder {
     }
 
     // MARK: - Helpers
+
+    /// Builds the format that matches the buffer list actually delivered,
+    /// keeping the declared sample rate and sample format. Returns the
+    /// declared format when the layout agrees.
+    private static func resolveFormat(
+        declared: AVAudioFormat,
+        bufferList: UnsafePointer<AudioBufferList>
+    ) -> AVAudioFormat {
+        let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: bufferList))
+        let bufferCount = list.count
+        guard bufferCount > 0 else { return declared }
+        let channelsPerBuffer = Int(list[0].mNumberChannels)
+        let isPlanar = bufferCount > 1 && channelsPerBuffer <= 1
+        let channels = isPlanar ? bufferCount : max(1, channelsPerBuffer)
+        let interleaved = !isPlanar && channels > 1
+
+        if channels == Int(declared.channelCount),
+           channels == 1 || interleaved == declared.isInterleaved {
+            return declared
+        }
+        Self.logger.warning("Tap buffers (\(bufferCount) × \(channelsPerBuffer)ch) don't match the advertised format (\(declared.channelCount)ch interleaved=\(declared.isInterleaved)) — adapting")
+        return AVAudioFormat(
+            commonFormat: declared.commonFormat,
+            sampleRate: declared.sampleRate,
+            channels: AVAudioChannelCount(channels),
+            interleaved: interleaved
+        ) ?? declared
+    }
 
     /// Peak amplitude scan (also the silence signal: peak == 0). Tight
     /// pointer loop — a Collection-based scan is far slower in debug builds.
