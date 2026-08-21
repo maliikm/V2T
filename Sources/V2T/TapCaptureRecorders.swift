@@ -288,6 +288,76 @@ final class MicTrackRecorder {
     }
 }
 
+/// Backstop against mislabeled capture rates: the session knows the true
+/// wall-clock recording duration, so if the finished file's decoded duration
+/// disagrees with it, the audio was written with a wrong sample-rate label
+/// (whatever the underlying cause). Rewrite it with the rate relabeled so it
+/// plays in real time — pure PCM copy, no resampling, pitch restored exactly.
+enum CaptureTimingRepair {
+    private static let logger = Logger(subsystem: kV2TSubsystem, category: "CaptureTimingRepair")
+
+    /// Blocking; call off the main thread. Returns the corrected file URL,
+    /// or the original when timing is already right (±3%) or repair fails.
+    static func repairIfMistimed(url: URL, actualDuration: Double) -> URL {
+        guard actualDuration > 1 else { return url }
+        do {
+            let source = try AVAudioFile(forReading: url)
+            let declaredRate = source.processingFormat.sampleRate
+            guard declaredRate > 0, source.length > 0 else { return url }
+            let fileDuration = Double(source.length) / declaredRate
+            let ratio = fileDuration / actualDuration
+            guard ratio < 0.97 || ratio > 1.03 else { return url }
+
+            // The rate the frames were really captured at.
+            let idealRate = declaredRate * fileDuration / actualDuration
+            let standardRates: [Double] = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000]
+            var rate = idealRate
+            if let nearest = standardRates.min(by: { abs($0 - idealRate) < abs($1 - idealRate) }),
+               abs(nearest - idealRate) / idealRate <= 0.03 {
+                rate = nearest
+            }
+            Self.logger.warning("Mistimed capture: declared \(declaredRate, privacy: .public) Hz, plays \(fileDuration, privacy: .public)s for \(actualDuration, privacy: .public)s recorded — relabeling at \(rate, privacy: .public) Hz")
+
+            let channels = source.processingFormat.channelCount
+            guard let outFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels) else {
+                return url
+            }
+            let outURL = url.deletingLastPathComponent()
+                .appendingPathComponent("retimed-\(url.lastPathComponent)")
+            try? FileManager.default.removeItem(at: outURL)
+            let output = try AVAudioFile(
+                forWriting: outURL,
+                settings: CaptureFormat.m4a.fileSettings(sampleRate: rate, channelCount: UInt32(channels)),
+                commonFormat: outFormat.commonFormat,
+                interleaved: outFormat.isInterleaved
+            )
+
+            let capacity: AVAudioFrameCount = 1 << 16
+            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: capacity),
+                  let outBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
+                return url
+            }
+            while true {
+                try source.read(into: inBuffer)
+                let frames = Int(inBuffer.frameLength)
+                if frames == 0 { break }
+                for channel in 0..<Int(channels) {
+                    if let src = inBuffer.floatChannelData?[channel],
+                       let dst = outBuffer.floatChannelData?[channel] {
+                        dst.update(from: src, count: frames)
+                    }
+                }
+                outBuffer.frameLength = inBuffer.frameLength
+                try output.write(from: outBuffer)
+            }
+            return outURL
+        } catch {
+            Self.logger.error("Timing repair failed: \(String(describing: error), privacy: .public)")
+            return url
+        }
+    }
+}
+
 /// Watches the tap's buffer stream for pathological silence.
 ///
 /// - All-zero from the very first buffer: almost certainly the System Audio

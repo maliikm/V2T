@@ -205,13 +205,23 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
         isSaving = true
         Task {
-            var finalURL = appURL
+            // Backstop: if the tap wrote with a mislabeled sample rate (the
+            // decoded duration disagrees with the wall clock), relabel it
+            // before anything else consumes it.
+            let repairedAppURL = await Task.detached(priority: .userInitiated) {
+                CaptureTimingRepair.repairIfMistimed(url: appURL, actualDuration: duration)
+            }.value
+            if repairedAppURL != appURL {
+                self.lastError = "The capture's timing was off and has been corrected automatically."
+            }
+
+            var finalURL = repairedAppURL
             if let micURL, FileManager.default.fileExists(atPath: micURL.path) {
                 do {
                     let mixURL = sessionDirectory.appendingPathComponent("mix.m4a")
                     finalURL = try await Task.detached(priority: .userInitiated) {
                         try MixdownExporter.export(
-                            appURL: appURL, micURL: micURL,
+                            appURL: repairedAppURL, micURL: micURL,
                             micOffsetSeconds: micOffset, outputURL: mixURL
                         )
                     }.value
