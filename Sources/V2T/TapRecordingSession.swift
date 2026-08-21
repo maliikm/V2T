@@ -42,6 +42,7 @@ final class TapRecordingSession {
     /// almost certainly a System Audio Recording permission denial.
     var onSuspectedPermissionDenial: (() -> Void)?
 
+    private let levelBox = TapLevelBox()
     private var tap = ProcessTap()
     private var tapRecorder: ProcessTapRecorder?
     private var micRecorder: MicTrackRecorder?
@@ -60,6 +61,12 @@ final class TapRecordingSession {
     var appFileURL: URL { directory.appendingPathComponent("app.m4a") }
     var micFileURL: URL { directory.appendingPathComponent("mic.m4a") }
     var hasMicTrack: Bool { micRecorder != nil }
+
+    /// Peak amplitude (0...1) seen since the last call — feeds the live
+    /// waveform in the main window.
+    func takeRecentPeak() -> Float {
+        levelBox.take()
+    }
 
     /// Seconds the mic track started after the app track (negative: before).
     var micOffsetSeconds: Double? {
@@ -95,6 +102,7 @@ final class TapRecordingSession {
         recorder.onBuffer = { [weak self] peak in
             guard let self else { return }
             self.watchdog.ingest(isSilent: peak == 0)
+            self.levelBox.note(peak)
         }
         tapRecorder = recorder
         try tap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
@@ -211,6 +219,28 @@ final class TapRecordingSession {
             newTap.invalidate()
             Self.logger.error("Tap rebuild failed: \(String(describing: error), privacy: .public)")
         }
+    }
+}
+
+/// Peak level handoff from the tap writer queue to the main-actor UI timer.
+final class TapLevelBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var peak: Float = 0
+
+    func note(_ value: Float) {
+        lock.lock()
+        if value > peak { peak = value }
+        lock.unlock()
+    }
+
+    /// Returns the max since the previous take, then resets.
+    func take() -> Float {
+        lock.lock()
+        defer {
+            peak = 0
+            lock.unlock()
+        }
+        return peak
     }
 }
 

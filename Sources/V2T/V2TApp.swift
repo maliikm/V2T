@@ -60,6 +60,8 @@ struct MainWindow: View {
         } detail: {
             if recorder.isRecording {
                 RecordingSessionView()
+            } else if appAudio.isRecording || appAudio.isSaving {
+                AppAudioSessionView()
             } else {
                 DetailView(recordingID: selection)
             }

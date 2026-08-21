@@ -15,6 +15,10 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     @Published private(set) var isPaused = false
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var targetName = ""
+    /// True when the current session also records the microphone.
+    @Published private(set) var sessionHasMic = false
+    /// Live tap levels (0...1), ~20/s — drives the main window's live waveform.
+    @Published private(set) var levels: [Float] = []
     @Published private(set) var availableApps: [AudioProcess] = []
     @Published private(set) var isSaving = false
     @Published var lastError: String?
@@ -89,8 +93,11 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     // MARK: - Recording
 
     /// Starts capturing `app`'s audio, or all system audio when nil.
+    /// - Parameter withMic: whether to also record the microphone;
+    ///   nil = the menu bar's "Also Record My Microphone" preference.
     func start(
         app: AudioProcess?,
+        withMic: Bool? = nil,
         store: LibraryStore,
         settings: AppSettings,
         transcriber: TranscriptionManager
@@ -115,8 +122,9 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         session.onSuspectedPermissionDenial = { [weak self] in
             self?.lastError = Self.permissionMessage
         }
+        let wantsMic = withMic ?? recordMicToo
         do {
-            try session.start(withMic: recordMicToo)
+            try session.start(withMic: wantsMic)
         } catch {
             lastError = "Couldn't start capture: \(error.localizedDescription)"
             try? FileManager.default.removeItem(at: session.directory)
@@ -125,15 +133,17 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
         self.session = session
         targetName = target.displayName
+        sessionHasMic = session.hasMicTrack
         startedAt = Date()
         accumulated = 0
         segmentStartedAt = startedAt
         elapsed = 0
+        levels = []
         isPaused = false
         isRecording = true
         startTimer()
 
-        if recordMicToo && !session.hasMicTrack {
+        if wantsMic && !session.hasMicTrack {
             lastError = "Microphone track couldn't start — recording app audio only."
         }
     }
@@ -228,18 +238,26 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+        // 20 Hz: matches the live waveform's expected sample rate.
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.isRecording else { return }
-                if let segmentStartedAt = self.segmentStartedAt {
-                    self.elapsed = self.accumulated + Date().timeIntervalSince(segmentStartedAt)
-                } else {
-                    self.elapsed = self.accumulated
-                }
+                self?.tick()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    private func tick() {
+        guard isRecording else { return }
+        if let segmentStartedAt {
+            elapsed = accumulated + Date().timeIntervalSince(segmentStartedAt)
+        } else {
+            elapsed = accumulated
+        }
+        if #available(macOS 14.4, *), let session, !isPaused {
+            levels.append(session.takeRecentPeak())
+        }
     }
 
     private func stopTimer() {

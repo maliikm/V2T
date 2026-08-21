@@ -123,7 +123,7 @@ struct RecordingSessionView: View {
 /// The zoomed live waveform: recent meter levels scroll leftward past a
 /// fixed "now" line, over a seconds ruler — red while recording, dimmed
 /// primary while paused.
-private struct LiveWaveformView: View {
+struct LiveWaveformView: View {
     let levels: [Float]
     let elapsed: Double
     let isPaused: Bool
@@ -209,7 +209,7 @@ private struct LiveWaveformView: View {
 }
 
 /// The bottom overview strip: the whole session so far, downsampled to fit.
-private struct OverviewLevelsView: View {
+struct OverviewLevelsView: View {
     let levels: [Float]
     let isPaused: Bool
 
