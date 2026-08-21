@@ -1,4 +1,3 @@
-import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
@@ -48,8 +47,8 @@ struct SettingsView: View {
             }
 
             Section {
-                KeyboardShortcuts.Recorder("Start/stop app-audio recording:", name: .toggleAppAudioRecording)
-                KeyboardShortcuts.Recorder("Pause/resume recording:", name: .togglePauseAppAudio)
+                LabeledContent("Start/stop app-audio recording", value: "⌘⌥R")
+                LabeledContent("Pause/resume recording", value: "⌘⌥P")
             } header: {
                 Text("Shortcuts")
             } footer: {
