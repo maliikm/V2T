@@ -34,11 +34,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>V2T records voice memos with your microphone.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>V2T records the audio of apps you choose (for example meeting apps) so it can transcribe them.</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
 </dict>

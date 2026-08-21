@@ -7,7 +7,7 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 - **Recording library** — a permanent recordings-list column with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
 - **Folders** — a collapsible folder sidebar (toolbar sidebar button) with All Recordings, Favorites, and your own folders: create, rename, delete, and move recordings between them; new recordings land in the folder you're viewing.
 - **Record** — red record button at the bottom of the sidebar captures AAC m4a (48 kHz), just like Voice Memos.
-- **Menu bar app-audio capture** — the V2T menu bar item records **another app's audio** (Zoom, Meet in a browser, etc.) or all system audio via ScreenCaptureKit, desktop-audio style. Pick "Record System Audio" or a specific app, stop from the same menu, and the capture lands in the library and auto-transcribes. Requires the **Screen Recording** permission (macOS gates system-audio capture behind it) — approve V2T in System Settings → Privacy & Security → Screen Recording on first use. The menu bar item keeps working with the main window closed.
+- **Menu bar app-audio capture** — the V2T menu bar item records **another app's audio** (Zoom, Meet in a browser, etc.) or all system audio using **Core Audio process taps** (ported from the DesktopAudio project). Pick "Record System Audio" or a specific app (apps currently playing audio are badged and float to the top), pause/resume, stop from the same menu, and the capture lands in the library and auto-transcribes. With **Also Record My Microphone** on (default), your mic is captured as a second, sample-aligned track and mixed in on stop — so a meeting recording contains both the other participants *and* you. The capture survives output-device switches (AirPods → speakers) and browser helper-process churn, and detects silent permission denials. Requires **macOS 14.4+** and the **System Audio Recording** permission (System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only). The menu bar item keeps working with the main window closed.
 - **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
 - **Playback** — overview waveform with click-to-seek, a zoomed scrubbing waveform view (toggle with the waveform/transcript toolbar button; drag it to scrub), big time counter, ±15 s skip, play/pause, and **Space** to play/pause anywhere (except while typing in a text field).
 - **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
@@ -18,7 +18,7 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 
 ## Requirements
 
-- macOS 13 (Ventura) or later
+- macOS 14 (Sonoma) or later — app-audio capture from the menu bar needs 14.4+
 - Xcode Command Line Tools (`xcode-select --install`) — no Xcode project needed
 - A [fal.ai API key](https://fal.ai/dashboard/keys)
 
