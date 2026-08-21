@@ -12,9 +12,10 @@ struct DetailView: View {
     let recordingID: UUID?
 
     @State private var waveform: WaveformData?
-    @State private var showTranscript = true
+    /// Waveform is the default view; the toolbar button flips to transcript.
+    @State private var showTranscript = false
     @State private var showOptions = false
-    @State private var showTrim = false
+    @StateObject private var editSession = AudioEditSession()
     @State private var showDeleteConfirm = false
     @State private var showingExporter = false
     @State private var copiedFeedback = false
@@ -36,36 +37,42 @@ struct DetailView: View {
         VStack(spacing: 0) {
             header(recording)
 
-            if showTranscript {
-                TranscriptPane(recording: recording)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ZoomedWaveformView(
-                    data: waveform,
-                    currentTime: player.currentTime,
-                    duration: player.duration > 0 ? player.duration : recording.duration
-                ) { time in
-                    player.seek(to: time)
+            if editSession.isActive {
+                EditModeView(session: editSession, recording: recording) {
+                    waveform = nil
+                    Task { await loadAudio(recording, force: true) }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.vertical, 16)
-            }
+            } else {
+                if showTranscript {
+                    TranscriptPane(recording: recording)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ZoomedWaveformView(
+                        data: waveform,
+                        currentTime: player.currentTime,
+                        duration: player.duration > 0 ? player.duration : recording.duration
+                    ) { time in
+                        player.seek(to: time)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.vertical, 16)
+                }
 
-            bottomControls(recording)
+                bottomControls(recording)
+            }
+        }
+        .onDisappear {
+            // Navigating away mid-edit commits the edits rather than
+            // silently discarding them.
+            if editSession.isActive {
+                editSession.end(commit: true, store: store)
+            }
         }
         .task(id: recording.audioFileName + recording.id.uuidString) {
             await loadAudio(recording)
         }
         .onAppear { titleDraft = recording.title }
         .toolbar { toolbarContent(recording) }
-        .sheet(isPresented: $showTrim) {
-            TrimView(recording: recording, waveform: waveform) {
-                // Audio changed: reload everything derived from it.
-                waveform = nil
-                Task { await loadAudio(recording, force: true) }
-            }
-            .frame(minWidth: 700, minHeight: 420)
-        }
         .popover(isPresented: $showOptions) { optionsPopover }
         .confirmationDialog("Delete “\(recording.title)”?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
@@ -165,6 +172,31 @@ struct DetailView: View {
 
     @ToolbarContentBuilder
     private func toolbarContent(_ recording: Recording) -> some ToolbarContent {
+        if editSession.isActive {
+            ToolbarItemGroup {
+                Button {
+                    editSession.undo()
+                } label: {
+                    Label("Undo", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(!editSession.canUndo || editSession.isProcessing || editSession.isReplacing)
+                .help("Undo the last edit")
+
+                Button {
+                    editSession.showTrimTool.toggle()
+                } label: {
+                    Label("Trim", systemImage: "crop")
+                }
+                .disabled(editSession.isReplacing)
+                .help("Select a range to trim or delete")
+            }
+        } else {
+            normalToolbar(recording)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func normalToolbar(_ recording: Recording) -> some ToolbarContent {
         ToolbarItemGroup {
             ShareLink(item: store.audioURL(for: recording)) {
                 Label("Share", systemImage: "square.and.arrow.up")
@@ -175,11 +207,11 @@ struct DetailView: View {
                 Label("Favorite", systemImage: recording.isFavorite ? "heart.fill" : "heart")
             }
             Button {
-                showTrim = true
+                editSession.begin(recording: recording, store: store, player: player, initialWaveform: waveform)
             } label: {
-                Label("Trim", systemImage: "crop")
+                Label("Edit", systemImage: "waveform.badge.magnifyingglass")
             }
-            .help("Trim or delete a section of the recording")
+            .help("Edit the audio: trim, replace, or resume recording")
             Button {
                 showDeleteConfirm = true
             } label: {

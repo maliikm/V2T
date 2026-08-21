@@ -13,7 +13,7 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 - **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
 - **Search** — the search field matches titles *and* transcript text.
 - **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled blocks with timestamps; long single-speaker turns are split at pauses and sentence ends so every block is a precise seek target; renameable speaker chips; **click any block to move playback there** (right-click for Play from Here / Copy Text); the current block highlights and follows during playback. Word-level timing is stored with each transcript. Recordings transcribed before this feature keep their coarse blocks — right-click → Re-transcribe to upgrade them.
-- **Trim editor** — select a range on the waveform, then **Trim** (keep selection) or **Delete** (remove selection); Apply/Cancel commit semantics like Voice Memos.
+- **Edit mode** — the toolbar's Edit button switches the pane in place (waveform view is the default view): **REPLACE** records your mic over the audio from the playhead, **RESUME** appends when the playhead is at the end, and the crop tool selects a range to **Trim** (keep) or **Delete**. Every edit is one **Undo** step; **Done** commits back to the library (which invalidates the transcript — re-transcribe after editing).
 - **Share & export** — share the audio file, copy the transcript as Markdown ready for Claude, copy plain text, or save a `.md`.
 
 ## Requirements
