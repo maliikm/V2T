@@ -1,3 +1,4 @@
+import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
@@ -43,6 +44,16 @@ struct SettingsView: View {
                 Text("Transcription")
             } footer: {
                 Text("Setting the real number of speakers markedly improves who-said-what accuracy. You can also set it per recording in the transcript pane.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                KeyboardShortcuts.Recorder("Start/stop app-audio recording:", name: .toggleAppAudioRecording)
+                KeyboardShortcuts.Recorder("Pause/resume recording:", name: .togglePauseAppAudio)
+            } header: {
+                Text("Shortcuts")
+            } footer: {
+                Text("Global shortcuts — they work in any app. Start/stop repeats your last capture target (or System Audio).")
                     .foregroundStyle(.secondary)
             }
         }

@@ -106,6 +106,8 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         lastError = nil
 
         let target: CaptureTarget = app.map { .app($0) } ?? .systemAudio
+        // Remembered so the ⌘⌥R hotkey repeats the last choice.
+        UserDefaults.standard.set(app?.id ?? "", forKey: "appAudioLastTarget")
         let session = TapRecordingSession(
             target: target,
             baseDirectory: FileManager.default.temporaryDirectory
@@ -133,6 +135,22 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
         if recordMicToo && !session.hasMicTrack {
             lastError = "Microphone track couldn't start — recording app audio only."
+        }
+    }
+
+    /// ⌘⌥R behavior: stop if recording, otherwise start with the last-used
+    /// target (falling back to System Audio if that app is gone).
+    func toggleFromHotkey(store: LibraryStore, settings: AppSettings, transcriber: TranscriptionManager) {
+        if isRecording {
+            stop()
+            return
+        }
+        guard !isSaving else { return }
+        Task {
+            await refreshApps()
+            let savedID = UserDefaults.standard.string(forKey: "appAudioLastTarget") ?? ""
+            let app = savedID.isEmpty ? nil : availableApps.first { $0.id == savedID }
+            start(app: app, store: store, settings: settings, transcriber: transcriber)
         }
     }
 
