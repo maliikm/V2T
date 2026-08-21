@@ -233,6 +233,22 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             let recording = self.store?.addRecordedFile(
                 at: finalURL, duration: duration, startedAt: startDate, title: title
             )
+            // Keep the raw per-source tracks next to the mix as insurance:
+            // if a mixdown is ever mistimed or needs re-balancing, the
+            // originals are still on disk (Show in Finder to reach them).
+            if let recording, let store = self.store {
+                let fm = FileManager.default
+                let folder = store.folderURL(for: recording.id)
+                if fm.fileExists(atPath: repairedAppURL.path) {
+                    try? fm.copyItem(at: repairedAppURL, to: folder.appendingPathComponent("track-app.m4a"))
+                }
+                if let micURL, fm.fileExists(atPath: micURL.path) {
+                    try? fm.copyItem(at: micURL, to: folder.appendingPathComponent("track-mic.m4a"))
+                }
+                if repairedAppURL != appURL, fm.fileExists(atPath: appURL.path) {
+                    try? fm.copyItem(at: appURL, to: folder.appendingPathComponent("track-app-raw.m4a"))
+                }
+            }
             try? FileManager.default.removeItem(at: sessionDirectory)
             self.isSaving = false
 
