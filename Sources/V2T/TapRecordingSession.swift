@@ -49,6 +49,7 @@ final class TapRecordingSession {
     private let watchdog = SilenceWatchdog()
     private var currentObjectIDs: [AudioObjectID] = []
     private var outputDeviceListener: AudioPropertyListener?
+    private var rateListener: AudioPropertyListener?
     private let ioQueue = DispatchQueue(label: "\(kV2TSubsystem).tap-io", qos: .userInitiated)
 
     private(set) var startedAt: Date?
@@ -106,6 +107,7 @@ final class TapRecordingSession {
         }
         tapRecorder = recorder
         try tap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
+        installRateListener()
 
         watchdog.onSuspectedPermissionDenial = { [weak self] in
             self?.onSuspectedPermissionDenial?()
@@ -191,9 +193,24 @@ final class TapRecordingSession {
         }
         outputDeviceListener?.cancel()
         outputDeviceListener = nil
+        rateListener?.cancel()
+        rateListener = nil
         tap.invalidate()
         micRecorder?.stop()
         tapRecorder?.finish()
+    }
+
+    /// A sample-rate change on the (new) aggregate device mid-recording
+    /// would silently mistime everything written after it — rebuild so the
+    /// recorder's converter resamples into the file's original rate instead.
+    private func installRateListener() {
+        rateListener?.cancel()
+        rateListener = try? AudioPropertyListener(
+            objectID: tap.aggregateDeviceID,
+            selector: kAudioDevicePropertyNominalSampleRate
+        ) { [weak self] in
+            Task { @MainActor in self?.rebuildTap(reason: "aggregate sample rate changed") }
+        }
     }
 
     // MARK: - Tap rebuild
@@ -214,6 +231,7 @@ final class TapRecordingSession {
             }
             try newTap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
             tap = newTap
+            installRateListener()
             watchdog.resetAfterRebuild()
         } catch {
             newTap.invalidate()

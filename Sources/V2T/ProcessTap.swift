@@ -97,8 +97,21 @@ final class ProcessTap {
             }
             aggregateDeviceID = newAggregateID
 
-            // 3. The tap's stream format drives file writing.
+            // 3. The tap's stream format drives file writing — BUT the IO
+            // proc delivers frames on the AGGREGATE device's clock (i.e. the
+            // physical output device's rate, with drift compensation). When
+            // that differs from the rate in the tap's advertised ASBD (e.g.
+            // Chrome mixing at 48 kHz while the speakers run at 44.1 kHz),
+            // trusting the ASBD mislabels the audio and playback comes out
+            // pitched up / fast. The aggregate's nominal rate is the truth.
             var asbd = try tapID.read(kAudioTapPropertyFormat, defaultValue: AudioStreamBasicDescription())
+            let aggregateRate: Double = (try? aggregateDeviceID.read(
+                kAudioDevicePropertyNominalSampleRate, defaultValue: Double(0)
+            )) ?? 0
+            if aggregateRate > 0, abs(asbd.mSampleRate - aggregateRate) > 1 {
+                Self.logger.warning("Tap ASBD rate \(asbd.mSampleRate, privacy: .public) != aggregate rate \(aggregateRate, privacy: .public) — using the aggregate rate")
+                asbd.mSampleRate = aggregateRate
+            }
             guard let format = AVAudioFormat(streamDescription: &asbd) else {
                 throw CoreAudioError.osStatus(kAudioHardwareUnsupportedOperationError, "AVAudioFormat from tap ASBD")
             }
