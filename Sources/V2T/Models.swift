@@ -70,6 +70,20 @@ struct Transcript: Codable, Equatable {
     let speakerIds: [String]
     /// Word-level timing; nil on transcripts saved before this field existed.
     let words: [TranscriptWord]?
+    /// Optional for compatibility with transcripts saved before provider support.
+    var provider: String? = nil
+    var model: String? = nil
+
+    /// Provider-neutral word adapter retains the same segmentation and editing
+    /// behavior as existing transcripts without passing through fal's wire format.
+    static func build(words: [TranscriptWord], sourceFileName: String, languageCode: String?) -> Transcript {
+        let ordered = words.sorted { $0.start < $1.start }
+        let timed = ordered.map {
+            TimedWord(text: $0.text, start: $0.start, end: $0.end, isEvent: $0.isEvent, speaker: $0.speakerId)
+        }
+        return Transcript(sourceFileName: sourceFileName, languageCode: languageCode,
+                          segments: makeSegments(timed), speakerIds: appearanceOrder(timed), words: ordered)
+    }
 
     /// Segment containing (or most recently before) the given playback time.
     func segmentIndex(at time: Double) -> Int? {
@@ -346,7 +360,7 @@ extension Transcript {
                 languageCode: languageCode,
                 segments: Transcript.makeSegments(timed),
                 speakerIds: Transcript.appearanceOrder(timed),
-                words: newWords
+                words: newWords, provider: provider, model: model
             )
         }
         let newSegments = segments.compactMap(segmentFallback)
@@ -359,7 +373,7 @@ extension Transcript {
             languageCode: languageCode,
             segments: newSegments,
             speakerIds: order.isEmpty ? speakerIds : order,
-            words: nil
+            words: nil, provider: provider, model: model
         )
     }
 }

@@ -476,16 +476,48 @@ final class LibraryStore: ObservableObject {
     @discardableResult
     func saveTranscript(_ transcript: Transcript, for id: UUID) -> Bool {
         guard var recording = recording(with: id) else { return false }
+        let previousRecording = recording
+        let destination = transcriptURL(for: id)
+        var previousData: Data?
+        var history: URL?
         do {
-            try writeData(Self.encoder.encode(transcript), transcriptURL(for: id))
-            // Retranscriptions need only the atomic transcript write. If the
-            // first metadata update fails, retain the result on disk for retry.
+            if FileManager.default.fileExists(atPath: destination.path) {
+                let oldData = try Data(contentsOf: destination)
+                previousData = oldData
+                let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                let archive = folderURL(for: id).appendingPathComponent("Transcript History", isDirectory: true)
+                    .appendingPathComponent("\(timestamp)-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+                history = archive
+                // Archive before overwriting anything, including the old name
+                // assignments: speaker_0 may be a different person next time.
+                try writeData(oldData, archive.appendingPathComponent("transcript.json"))
+                try writeData(Self.encoder.encode(previousRecording), archive.appendingPathComponent("meta.json"))
+                if let old = try? Self.decoder.decode(Transcript.self, from: oldData) {
+                    let markdown = TranscriptFormatter.markdownForClaude(old, names: previousRecording.speakerNames)
+                    try writeData(Data(markdown.utf8), archive.appendingPathComponent("transcript.md"))
+                }
+                recording.speakerNames = [:]
+            }
+            try writeData(Self.encoder.encode(transcript), destination)
             transcriptCache[id] = nil
             searchTextCache[id] = nil
-            if !recording.hasTranscript {
-                recording.hasTranscript = true
-                guard update(recording) else { return false }
+            recording.hasTranscript = true
+            do {
+                if recording != previousRecording { try writeMeta(recording) }
+            } catch {
+                // Restore the old transcript when metadata couldn't commit.
+                // On a first transcription retain the result for manual recovery.
+                if let previousData {
+                    do { try writeData(previousData, destination) }
+                    catch {
+                        lastError = "Couldn't finish saving or restore the active transcript. The previous version is preserved at \(history!.path)."
+                        return false
+                    }
+                }
+                throw error
             }
+            if let index = recordings.firstIndex(where: { $0.id == id }) { recordings[index] = recording }
             transcriptCache[id] = transcript
             searchTextCache[id] = nil
             return true

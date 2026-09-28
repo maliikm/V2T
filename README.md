@@ -1,6 +1,6 @@
 # V2T — Voice Memos with real transcription
 
-A native macOS app modeled on Apple Voice Memos, with one big upgrade: recordings are transcribed with **speaker diarization** (who said what) using [ElevenLabs Scribe v2](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) via the fal.ai API, and every transcript is one click away from being pasted into Claude.
+A native macOS app modeled on Apple Voice Memos, with **speaker diarization** (who said what) using your choice of [ElevenLabs Scribe v2 through fal](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) or [Deepgram Nova-3](https://developers.deepgram.com/docs/pre-recorded-audio). Transcripts can be copied as plain text or Markdown.
 
 ## Features
 
@@ -22,7 +22,7 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 
 - macOS 14 (Sonoma) or later — app-audio capture from the menu bar needs 14.4+
 - Xcode Command Line Tools (`xcode-select --install`) — no Xcode project needed
-- A [fal.ai API key](https://fal.ai/dashboard/keys)
+- A [fal.ai API key](https://fal.ai/dashboard/keys) or [Deepgram API key](https://console.deepgram.com/) for transcription. Recording and playback do not require a key.
 
 ## Run it
 
@@ -39,18 +39,31 @@ Or build a double-clickable app bundle (recommended, especially for microphone p
 mv V2T.app /Applications/
 ```
 
-Set your fal.ai API key in **Settings (⌘,)**.
+Choose your transcription provider and save its API key in **Settings (⌘,)**. Keys are stored separately in macOS Keychain. Existing installations keep fal as the default; provider changes apply only to new requests.
+
+## Deepgram setup
+
+1. Open Settings → Transcription Provider and select **Deepgram · Nova-3**.
+2. Paste your Deepgram API key and click **Save Key**. The existing fal key is retained.
+3. Set the Deepgram language code (`en` by default, `es`, or `multi` for supported multilingual conversations). Leave it empty to detect the dominant language. This setting is separate from fal's `eng`/`spa` codes.
+4. Transcribe a short recording. Word timing, speaker renaming, click-to-seek, export, and transcript-preserving trims use the same local format as fal transcripts.
+
+Deepgram receives the audio directly via HTTPS; no public file URL or fal CDN upload is involved. V2T requests Nova-3, the v2 batch diarizer, smart formatting, and `mip_opt_out=true`. Model-improvement opt-out is always enabled and may increase listed rates; it does not mean transcription happens locally. See the [API documentation](https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded) and [pricing](https://deepgram.com/pricing).
+
+Deepgram speaker-count hints and audio-event tagging are not implemented; the fal-only controls are hidden without discarding their saved values. Deepgram files are sent whole, up to 2 GB, rather than using fal's overlapping chunks. The API has a processing-time limit; a long or difficult recording can still time out. V2T does not automatically retry paid requests or fall back to a different provider. Cancelling stops the local request, but does not guarantee the provider stops processing or waives charges.
+
+Changing providers never bulk-transcribes or modifies your library. To compare an existing recording, switch providers and use **Re-transcribe**. Before replacement, V2T archives the previous transcript, recording metadata/speaker names, and a readable Markdown export under `Library/<recording-id>/Transcript History/`. **Previous Versions** opens that folder in Finder (manual comparison, not an in-app restore browser). Speaker names are reset on the new transcript because provider speaker numbers aren't stable identities. The current transcript remains unchanged if the request or archive write fails.
 
 ## Transcription accuracy
 
-- The model is ElevenLabs **Scribe v2** on fal — the most accurate speech-to-text on fal, with built-in diarization.
-- **Set the number of speakers** (per recording in the transcript pane, or a default in Settings). A known speaker count is far more reliable than auto-detection.
+- Choose between ElevenLabs **Scribe v2** on fal and Deepgram **Nova-3**. Compare representative recordings before choosing a default; accuracy and speaker assignments depend on the audio.
+- With fal, **set the number of speakers** (per recording or in Settings) to provide a diarization hint. Deepgram uses automatic speaker detection.
 - fal's Scribe endpoints cap a single request at 20 minutes, so longer recordings are split into ~19-minute chunks overlapping by 2 minutes, transcribed in parallel, and stitched back together; speaker labels are matched across boundaries using the overlap. If someone is silent through an entire overlap window they can come back as a new "Speaker N" — give both chips the same name and exports read correctly.
 - Trim/Delete retime the existing transcript. Replace/Resume add new speech and require re-transcription.
 
 ## Verify changes
 
-With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio bytes, never your recordings, microphone, Keychain, or transcription account. Tests cover source persistence/migration, exact app selection, overlapping start requests, recovery after metadata/track failures, safe edits, and transcript write errors.
+With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio bytes, never your recordings, microphone, Keychain, or transcription account. Tests cover capture/recovery, provider and credential isolation, request parameters, HTTP errors, speaker/word parsing, old transcript compatibility, transcript archives, settings changes during jobs, and cancellation/restart races. Network responses are mocked; a successful live transcription with your own key is still a manual smoke check.
 
 Before relying on a long recording, run these hardware smoke checks on your Mac:
 
@@ -62,11 +75,21 @@ Before relying on a long recording, run these hardware smoke checks on your Mac:
 
 ## Costs
 
-Transcription is billed by fal.ai per audio minute; a typical 1-hour meeting costs well under a dollar. Recording, playback, editing, and search are all local and free.
+Transcription is billed by the selected provider. Check [fal pricing](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) or [Deepgram pricing](https://deepgram.com/pricing), including privacy/add-on adjustments. Re-transcription is another paid request. Recording, playback, editing, and search are local.
 
 ## How transcription works
+
+Both providers return words that are normalized into V2T's local `Transcript` format. Each new transcript records its provider/model. Existing transcript files remain compatible.
+
+### fal
 
 1. `POST https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → `PUT` the audio to the returned upload URL.
 2. `POST https://queue.fal.run/fal-ai/elevenlabs/speech-to-text/scribe-v2` with `{ audio_url, diarize: true, num_speakers }`.
 3. Poll the queue status URL, fetch the word-level result (`speaker_id` per word), and group words into per-speaker segments.
 4. Recordings over 20 minutes are split with AVFoundation first; chunk-local speaker labels are mapped onto global ones by matching who talks at the same timestamps inside the 2-minute overlaps, then the duplicated overlap is cut at its midpoint.
+
+### Deepgram
+
+1. Upload the local file directly to `POST https://api.deepgram.com/v1/listen` with token authentication and the options described above.
+2. Decode the returned word timestamps, punctuated words, language, and speaker numbers. Reject malformed, empty, or undiarized responses without replacing an existing transcript.
+3. Use the same segmentation, local persistence, search, export, and editing logic as the other provider. Settings are snapshotted when the request starts; switching providers mid-job does not redirect it.

@@ -33,6 +33,9 @@ struct TranscriptPane: View {
         VStack(spacing: 10) {
             ProgressView()
             Text(status.label).foregroundStyle(.secondary)
+            if let provider = transcriber.providers[recording.id] {
+                Text(provider.title).font(.caption).foregroundStyle(.secondary)
+            }
             Button("Cancel") { transcriber.cancel(recording.id) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,17 +50,21 @@ struct TranscriptPane: View {
                 .font(.title3.weight(.semibold))
 
             if !settings.hasAPIKey {
-                Text("Add your fal.ai API key in Settings (⌘,) to transcribe.")
+                Text("Add your \(settings.provider.name) API key in Settings (⌘,) to transcribe.")
                     .foregroundStyle(.secondary)
             } else {
-                Picker("Speakers:", selection: speakersBinding) {
-                    Text("Auto-detect").tag(0)
-                    ForEach(2...16, id: \.self) { count in
-                        Text("\(count)").tag(count)
+                if settings.provider == .fal {
+                    Picker("Speakers:", selection: speakersBinding) {
+                        Text("Auto-detect").tag(0)
+                        ForEach(2...16, id: \.self) { count in
+                            Text("\(count)").tag(count)
+                        }
                     }
+                    .frame(maxWidth: 260)
+                    .help("Setting the real number of people speaking makes speaker labels much more accurate.")
+                } else {
+                    Text("Deepgram · Nova-3 · Automatic speaker detection").font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: 260)
-                .help("Setting the real number of people speaking makes speaker labels much more accurate.")
 
                 Button {
                     transcriber.transcribe(recording, store: store, settings: settings)
@@ -95,6 +102,19 @@ struct TranscriptPane: View {
 
     private func transcriptBody(_ transcript: Transcript) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(transcript.provider.flatMap(TranscriptionProvider.init(rawValue:))?.title ?? "Earlier transcript")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Previous Versions") {
+                    NSWorkspace.shared.open(store.folderURL(for: recording.id).appendingPathComponent("Transcript History"))
+                }
+                .font(.caption)
+                .disabled(!FileManager.default.fileExists(atPath: store.folderURL(for: recording.id).appendingPathComponent("Transcript History").path))
+            }.padding(.horizontal, 20).padding(.top, 8)
+            if let error = transcriber.error(for: recording.id) {
+                Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding(12)
+            }
             speakerLegend(transcript)
             Divider()
             ScrollViewReader { proxy in
@@ -107,7 +127,7 @@ struct TranscriptPane: View {
                     }
                     .padding(20)
                 }
-                .onChange(of: currentSegmentIndex(transcript)) { newIndex in
+                .onChange(of: currentSegmentIndex(transcript)) { _, newIndex in
                     guard player.isPlaying,
                           player.currentRecordingID == recording.id,
                           let newIndex,

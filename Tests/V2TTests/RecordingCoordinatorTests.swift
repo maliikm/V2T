@@ -13,7 +13,7 @@ struct RecordingCoordinatorTests {
             try? FileManager.default.removeItem(at: root)
         }
         let store = LibraryStore(rootURL: root.appendingPathComponent("Library"))
-        let settings = AppSettings(defaults: defaults, loadAPIKey: { nil })
+        let settings = AppSettings(defaults: defaults, loadAPIKey: { nil }, loadDeepgramAPIKey: { nil })
         let recorder = RecorderController()
         let appAudio = AppAudioRecorder()
         var requests = 0
