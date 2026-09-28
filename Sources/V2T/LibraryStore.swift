@@ -27,18 +27,29 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var recordings: [Recording] = []
     @Published private(set) var folders: [RecordingFolder] = []
     @Published var lastError: String?
+    @Published private(set) var lastSavedRecordingID: UUID?
+    @Published private(set) var recoveryDirectories: [URL] = []
 
     let rootURL: URL
+    let recoveryRootURL: URL
+    private let writeData: (Data, URL) throws -> Void
     private var transcriptCache: [UUID: Transcript] = [:]
     private var searchTextCache: [UUID: String] = [:]
 
-    init() {
+    init(rootURL: URL? = nil, writeData: @escaping (Data, URL) throws -> Void = {
+        try $0.write(to: $1, options: .atomic)
+    }) {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        rootURL = appSupport.appendingPathComponent("V2T/Library", isDirectory: true)
-        try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        self.rootURL = rootURL ?? appSupport.appendingPathComponent("V2T/Library", isDirectory: true)
+        recoveryRootURL = self.rootURL.deletingLastPathComponent().appendingPathComponent("Recovery", isDirectory: true)
+        self.writeData = writeData
+        do {
+            try FileManager.default.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
+        } catch { lastError = "Couldn't open the recording library: \(error.localizedDescription)" }
         reload()
         loadFolders()
+        refreshRecovery()
     }
 
     // MARK: - Paths
@@ -100,9 +111,14 @@ final class LibraryStore: ObservableObject {
         folders = loaded
     }
 
-    private func saveFolders() {
-        if let data = try? Self.encoder.encode(folders) {
-            try? data.write(to: foldersURL, options: .atomic)
+    private func saveFolders(_ updated: [RecordingFolder]) -> Bool {
+        do {
+            try writeData(Self.encoder.encode(updated), foldersURL)
+            folders = updated
+            return true
+        } catch {
+            lastError = "Couldn't save folders: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -115,16 +131,15 @@ final class LibraryStore: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let folder = RecordingFolder(id: UUID(), name: trimmed)
-        folders.append(folder)
-        saveFolders()
-        return folder
+        return saveFolders(folders + [folder]) ? folder : nil
     }
 
     func renameFolder(_ id: UUID, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let index = folders.firstIndex(where: { $0.id == id }) else { return }
-        folders[index].name = trimmed
-        saveFolders()
+        var updated = folders
+        updated[index].name = trimmed
+        _ = saveFolders(updated)
     }
 
     /// Removes the folder; its recordings stay in the library (top level).
@@ -132,10 +147,9 @@ final class LibraryStore: ObservableObject {
         for recording in recordings where recording.folderID == id {
             var updated = recording
             updated.folderID = nil
-            update(updated)
+            guard update(updated) else { return }
         }
-        folders.removeAll { $0.id == id }
-        saveFolders()
+        _ = saveFolders(folders.filter { $0.id != id })
     }
 
     func move(_ recordingID: UUID, toFolder folderID: UUID?) {
@@ -217,7 +231,7 @@ final class LibraryStore: ObservableObject {
                 id: id, title: title, createdAt: Date(), duration: duration,
                 audioFileName: fileName
             )
-            insert(recording)
+            try insert(recording)
             return recording
         } catch {
             try? FileManager.default.removeItem(at: folder)
@@ -226,45 +240,125 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Moves a freshly captured recording (from RecorderController) into the library.
+    /// Capture files live outside the OS temporary directory until the complete
+    /// recording (including metadata and raw tracks) is installed successfully.
+    func makeCaptureDirectory() throws -> URL {
+        let directory = recoveryRootURL.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    func refreshRecovery() {
+        recoveryDirectories = ((try? FileManager.default.contentsOfDirectory(
+            at: recoveryRootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        )) ?? []).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// Copy, verify required writes, and rename a staged directory into place.
+    /// A failed copy or write cannot delete the source or expose a partial item.
     @discardableResult
-    func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date, title: String? = nil) -> Recording? {
-        let id = UUID()
-        let folder = folderURL(for: id)
+    func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date,
+                         title: String? = nil, folderID: UUID? = nil,
+                         rawTracks: [String: URL] = [:]) -> Recording? {
+        let directory = tempURL.deletingLastPathComponent()
+        guard directory.deletingLastPathComponent().standardizedFileURL == recoveryRootURL.standardizedFileURL,
+              rawTracks.values.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL }) else {
+            lastError = "Capture files must be inside a V2T Recovery folder. No files were changed."
+            return nil
+        }
+        let recording = Recording(
+            title: title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title! : nextRecordingTitle(),
+            createdAt: startedAt, duration: duration, audioFileName: "audio.m4a", folderID: folderID
+        )
+        let draft = CaptureDraft(recording: recording, audioFileName: tempURL.lastPathComponent,
+                                 tracks: rawTracks.mapValues(\.lastPathComponent))
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let destination = folder.appendingPathComponent("audio.m4a")
-            try FileManager.default.moveItem(at: tempURL, to: destination)
-            let resolvedTitle: String
-            if let title, !title.trimmingCharacters(in: .whitespaces).isEmpty {
-                resolvedTitle = title
-            } else {
-                resolvedTitle = nextRecordingTitle()
-            }
-            let recording = Recording(
-                id: id, title: resolvedTitle, createdAt: startedAt,
-                duration: duration, audioFileName: "audio.m4a"
-            )
-            insert(recording)
-            return recording
+            try writeData(Self.encoder.encode(draft), directory.appendingPathComponent(CaptureDraft.manifestName))
+            return try installCapture(draft, from: directory)
         } catch {
-            lastError = "Couldn't save recording: \(error.localizedDescription)"
+            lastError = "Couldn't save recording: \(error.localizedDescription). The captured files are kept in Recovery."
+            refreshRecovery()
             return nil
         }
     }
 
-    private func insert(_ recording: Recording) {
+    func retryRecoverableCaptures() -> [Recording] {
+        var saved: [Recording] = []
+        var failures: [String] = []
+        lastError = nil
+        for directory in recoveryDirectories {
+            do {
+                let data = try Data(contentsOf: directory.appendingPathComponent(CaptureDraft.manifestName))
+                let draft = try Self.decoder.decode(CaptureDraft.self, from: data)
+                saved.append(try installCapture(draft, from: directory))
+            } catch {
+                failures.append(error.localizedDescription)
+            }
+        }
+        refreshRecovery()
+        if let failure = failures.first {
+            lastError = "Some captured files still need recovery: \(failure). Use Show Files to keep or import them."
+        }
+        return saved
+    }
+
+    private func installCapture(_ draft: CaptureDraft, from directory: URL) throws -> Recording {
+        let fm = FileManager.default
+        // Recovery manifests are data: never allow them to escape their folder.
+        let names = [draft.audioFileName] + Array(draft.tracks.keys) + Array(draft.tracks.values)
+        guard names.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") }),
+              draft.tracks.keys.allSatisfy({ $0.hasPrefix("track-") && $0.hasSuffix(".m4a") }) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        var recording = draft.recording
+        recording.audioFileName = "audio.m4a"
+        // A folder may have been deleted since a failed save.
+        if let id = recording.folderID, folder(with: id) == nil { recording.folderID = nil }
+        let destination = folderURL(for: recording.id)
+        if let existing = self.recording(with: recording.id) {
+            // A previous install succeeded but cleanup failed. Do not duplicate it.
+            try fm.removeItem(at: directory)
+            return existing
+        }
+        let staging = rootURL.appendingPathComponent(".capture-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
+        try fm.copyItem(at: directory.appendingPathComponent(draft.audioFileName), to: staging.appendingPathComponent("audio.m4a"))
+        for (name, source) in draft.tracks {
+            try fm.copyItem(at: directory.appendingPathComponent(source), to: staging.appendingPathComponent(name))
+        }
+        try writeData(Self.encoder.encode(recording), staging.appendingPathComponent("meta.json"))
+        try fm.moveItem(at: staging, to: destination)
         recordings.insert(recording, at: 0)
         recordings.sort { $0.createdAt > $1.createdAt }
-        writeMeta(recording)
+        lastSavedRecordingID = recording.id
+        lastError = nil
+        do { try fm.removeItem(at: directory) }
+        catch { lastError = "Recording saved; the extra recovery copy couldn't be removed: \(error.localizedDescription)" }
+        refreshRecovery()
+        return recording
+    }
+
+    private func insert(_ recording: Recording) throws {
+        try writeMeta(recording)
+        recordings.insert(recording, at: 0)
+        recordings.sort { $0.createdAt > $1.createdAt }
     }
 
     // MARK: - Updating
 
-    func update(_ recording: Recording) {
-        guard let index = recordings.firstIndex(where: { $0.id == recording.id }) else { return }
-        recordings[index] = recording
-        writeMeta(recording)
+    @discardableResult
+    func update(_ recording: Recording) -> Bool {
+        guard let index = recordings.firstIndex(where: { $0.id == recording.id }) else { return false }
+        do {
+            try writeMeta(recording)
+            recordings[index] = recording
+            return true
+        } catch {
+            lastError = "Couldn't save recording details: \(error.localizedDescription)"
+            return false
+        }
     }
 
     func rename(_ id: UUID, to title: String) {
@@ -293,10 +387,12 @@ final class LibraryStore: ObservableObject {
     }
 
     func delete(_ id: UUID) {
-        recordings.removeAll { $0.id == id }
-        transcriptCache[id] = nil
-        searchTextCache[id] = nil
-        try? FileManager.default.removeItem(at: folderURL(for: id))
+        do {
+            try FileManager.default.removeItem(at: folderURL(for: id))
+            recordings.removeAll { $0.id == id }
+            transcriptCache[id] = nil
+            searchTextCache[id] = nil
+        } catch { lastError = "Couldn't delete recording: \(error.localizedDescription)" }
     }
 
     /// Swaps in edited audio (after trim), invalidating the waveform cache.
@@ -306,63 +402,62 @@ final class LibraryStore: ObservableObject {
     /// recording without its original audio: the new file is staged inside
     /// the library folder first, the old audio is moved aside (not deleted)
     /// until the swap succeeds.
+    @discardableResult
     func replaceAudio(
         for id: UUID,
         with newFileURL: URL,
         duration: Double,
         transcriptTransform: ((Transcript) -> Transcript)? = nil
-    ) {
-        guard var recording = recording(with: id) else { return }
+    ) -> Bool {
+        guard var recording = recording(with: id) else { return false }
         // Read before any cache/file invalidation below.
         let preservedTranscript: Transcript? = transcriptTransform.flatMap { transform in
             transcript(for: id).map(transform)
         }
         let folder = folderURL(for: id)
-        let destination = folder.appendingPathComponent("audio.m4a")
-        let staging = folder.appendingPathComponent("audio.m4a.new")
-        let backup = folder.appendingPathComponent("audio.m4a.old")
+        let staging = rootURL.appendingPathComponent(".edit-\(UUID().uuidString)", isDirectory: true)
+        let backup = rootURL.appendingPathComponent(".edit-backup-\(UUID().uuidString)", isDirectory: true)
         let fm = FileManager.default
-        let oldURL = audioURL(for: recording)
+        defer { try? fm.removeItem(at: staging) }
         do {
-            // 1. Get the new audio onto the library volume (the risky step —
-            //    possibly cross-volume). Old audio untouched if it throws.
-            try? fm.removeItem(at: staging)
-            try fm.moveItem(at: newFileURL, to: staging)
-
-            // 2. Move the old audio aside (same-directory rename).
-            try? fm.removeItem(at: backup)
-            if fm.fileExists(atPath: oldURL.path) {
-                try fm.moveItem(at: oldURL, to: backup)
-            }
-
-            // 3. Final same-directory rename into place; restore on failure.
-            do {
-                if fm.fileExists(atPath: destination.path) {
-                    try fm.removeItem(at: destination)
-                }
-                try fm.moveItem(at: staging, to: destination)
-            } catch {
-                try? fm.moveItem(at: backup, to: oldURL)
-                try? fm.removeItem(at: staging)
-                throw error
-            }
-            try? fm.removeItem(at: backup)
-
+            // Prepare audio, transcript and metadata together. The original
+            // directory and the editor's working file remain intact on failure.
+            try fm.copyItem(at: folder, to: staging)
+            let stagedOldAudio = staging.appendingPathComponent(recording.audioFileName)
+            try fm.removeItem(at: stagedOldAudio)
+            try fm.copyItem(at: newFileURL, to: staging.appendingPathComponent("audio.m4a"))
+            let stagedWaveform = staging.appendingPathComponent("waveform.json")
+            if fm.fileExists(atPath: stagedWaveform.path) { try fm.removeItem(at: stagedWaveform) }
+            let stagedTranscript = staging.appendingPathComponent("transcript.json")
             recording.audioFileName = "audio.m4a"
             recording.duration = duration
-            transcriptCache[id] = nil
-            searchTextCache[id] = nil
-            try? fm.removeItem(at: waveformCacheURL(for: id))
-            if let preservedTranscript, !preservedTranscript.segments.isEmpty {
-                update(recording)
-                saveTranscript(preservedTranscript, for: id)
-            } else {
-                recording.hasTranscript = false
-                update(recording)
-                try? fm.removeItem(at: transcriptURL(for: id))
+            recording.hasTranscript = preservedTranscript?.segments.isEmpty == false
+            if recording.hasTranscript, let preservedTranscript {
+                try writeData(Self.encoder.encode(preservedTranscript), stagedTranscript)
+            } else if fm.fileExists(atPath: stagedTranscript.path) {
+                try fm.removeItem(at: stagedTranscript)
             }
+            try writeData(Self.encoder.encode(recording), staging.appendingPathComponent("meta.json"))
+            try fm.moveItem(at: folder, to: backup)
+            do {
+                try fm.moveItem(at: staging, to: folder)
+            } catch {
+                do { try fm.moveItem(at: backup, to: folder) }
+                catch {
+                    lastError = "The original recording is preserved at \(backup.path). Restore it before editing again."
+                    return false
+                }
+                throw error
+            }
+            if let index = recordings.firstIndex(where: { $0.id == id }) { recordings[index] = recording }
+            transcriptCache[id] = recording.hasTranscript ? preservedTranscript : nil
+            searchTextCache[id] = nil
+            try? fm.removeItem(at: backup)
+            try? fm.removeItem(at: newFileURL)
+            return true
         } catch {
             lastError = "Couldn't apply the edit: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -378,22 +473,32 @@ final class LibraryStore: ObservableObject {
         return transcript
     }
 
-    func saveTranscript(_ transcript: Transcript, for id: UUID) {
-        guard var recording = recording(with: id) else { return }
-        transcriptCache[id] = transcript
-        searchTextCache[id] = nil
-        if let data = try? Self.encoder.encode(transcript) {
-            try? data.write(to: transcriptURL(for: id), options: .atomic)
+    @discardableResult
+    func saveTranscript(_ transcript: Transcript, for id: UUID) -> Bool {
+        guard var recording = recording(with: id) else { return false }
+        do {
+            try writeData(Self.encoder.encode(transcript), transcriptURL(for: id))
+            // Retranscriptions need only the atomic transcript write. If the
+            // first metadata update fails, retain the result on disk for retry.
+            transcriptCache[id] = nil
+            searchTextCache[id] = nil
+            if !recording.hasTranscript {
+                recording.hasTranscript = true
+                guard update(recording) else { return false }
+            }
+            transcriptCache[id] = transcript
+            searchTextCache[id] = nil
+            return true
+        } catch {
+            lastError = "Couldn't save transcript: \(error.localizedDescription)"
+            return false
         }
-        recording.hasTranscript = true
-        update(recording)
     }
 
     // MARK: - Persistence helpers
 
-    private func writeMeta(_ recording: Recording) {
-        guard let data = try? Self.encoder.encode(recording) else { return }
-        try? data.write(to: metaURL(for: recording.id), options: .atomic)
+    private func writeMeta(_ recording: Recording) throws {
+        try writeData(Self.encoder.encode(recording), metaURL(for: recording.id))
     }
 
     private static let encoder: JSONEncoder = {

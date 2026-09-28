@@ -15,6 +15,7 @@ final class RecorderController: NSObject, ObservableObject {
     @Published private(set) var sessionTitle = ""
     @Published private(set) var sessionStartedAt: Date?
     @Published var lastError: String?
+    @Published private(set) var isSaving = false
 
     private var recorder: AVAudioRecorder?
     private var timer: Timer?
@@ -24,20 +25,14 @@ final class RecorderController: NSObject, ObservableObject {
     private var onFinished: ((Recording) -> Void)?
     /// Guards the async gap between the record click and the microphone
     /// permission response, so a double-click can't start two recorders.
-    private var isStarting = false
+    @Published private(set) var isStarting = false
+    private var folderID: UUID?
 
-    func toggle(store: LibraryStore, onFinished: ((Recording) -> Void)? = nil) {
-        if isRecording {
-            stop()
-        } else {
-            start(store: store, onFinished: onFinished)
-        }
-    }
-
-    func start(store: LibraryStore, onFinished: ((Recording) -> Void)? = nil) {
-        guard !isRecording, !isStarting else { return }
+    func start(store: LibraryStore, folderID: UUID? = nil, onFinished: ((Recording) -> Void)? = nil) {
+        guard !isRecording, !isStarting, !isSaving else { return }
         isStarting = true
         self.store = store
+        self.folderID = folderID
         self.onFinished = onFinished
         Task {
             defer { self.isStarting = false }
@@ -52,8 +47,6 @@ final class RecorderController: NSObject, ObservableObject {
     }
 
     private func beginRecording() {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("V2T-rec-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 48_000,
@@ -61,6 +54,9 @@ final class RecorderController: NSObject, ObservableObject {
             AVEncoderBitRateKey: 96_000,
         ]
         do {
+            guard let store else { return }
+            let directory = try store.makeCaptureDirectory()
+            let url = directory.appendingPathComponent("audio.m4a")
             let recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder.delegate = self
             recorder.isMeteringEnabled = true
@@ -72,7 +68,7 @@ final class RecorderController: NSObject, ObservableObject {
             tempURL = url
             startedAt = Date()
             sessionStartedAt = startedAt
-            sessionTitle = store?.nextRecordingTitle() ?? "New Recording"
+            sessionTitle = store.nextRecordingTitle()
             elapsed = 0
             levels = []
             isPaused = false
@@ -104,12 +100,14 @@ final class RecorderController: NSObject, ObservableObject {
         guard let recorder, isRecording else { return }
         elapsed = recorder.currentTime
         isRecording = false
+        isSaving = true
         isPaused = false
         stopTimer()
         recorder.stop() // finalization continues in the delegate callback
     }
 
     private func finishedWriting(successfully: Bool) {
+        defer { isSaving = false }
         // The recording can also end without stop() being called (encoder or
         // disk error), so reset ALL state here unconditionally.
         // `elapsed` is fresh in both paths: stop() captured it, and the
@@ -128,16 +126,20 @@ final class RecorderController: NSObject, ObservableObject {
 
         guard successfully, let finishedTempURL, let store else {
             if !successfully { lastError = "Recording failed to save." }
+            store?.refreshRecovery()
             return
         }
         let recording = store.addRecordedFile(
             at: finishedTempURL,
             duration: finishedElapsed,
             startedAt: startedAt,
-            title: finishedTitle
+            title: finishedTitle,
+            folderID: folderID
         )
         if let recording {
             callback?(recording)
+        } else {
+            lastError = store.lastError ?? "Captured files are kept in Recovery. Open V2T to retry saving."
         }
     }
 

@@ -133,7 +133,7 @@ struct EditModeView: View {
                     }
                     Button("Done") {
                         session.end(commit: true, store: store)
-                        onDone()
+                        if !session.isActive { onDone() }
                     }
                     .controlSize(.large)
                     .disabled(session.isReplacing || session.isProcessing)

@@ -43,6 +43,7 @@ final class TapRecordingSession {
     var onSuspectedPermissionDenial: (() -> Void)?
 
     private let levelBox = TapLevelBox()
+    private let micLevelBox = TapLevelBox()
     private var tap = ProcessTap()
     private var tapRecorder: ProcessTapRecorder?
     private var micRecorder: MicTrackRecorder?
@@ -68,6 +69,8 @@ final class TapRecordingSession {
     func takeRecentPeak() -> Float {
         levelBox.take()
     }
+
+    func takeRecentMicPeak() -> Float { micLevelBox.take() }
 
     /// Seconds the mic track started after the app track (negative: before).
     var micOffsetSeconds: Double? {
@@ -127,6 +130,7 @@ final class TapRecordingSession {
 
         if withMic {
             let mic = MicTrackRecorder()
+            mic.onBuffer = { [weak self] peak in self?.micLevelBox.note(peak) }
             do {
                 try mic.start(fileURL: micFileURL, captureFormat: .m4a)
                 micRecorder = mic

@@ -19,13 +19,11 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     @Published private(set) var sessionHasMic = false
     /// Live tap levels (0...1), ~20/s — drives the main window's live waveform.
     @Published private(set) var levels: [Float] = []
+    @Published private(set) var appLevel: Float = 0
+    @Published private(set) var micLevel: Float = 0
     @Published private(set) var availableApps: [AudioProcess] = []
     @Published private(set) var isSaving = false
     @Published var lastError: String?
-    /// Record the microphone alongside the app audio (meetings: them + you).
-    @Published var recordMicToo: Bool {
-        didSet { UserDefaults.standard.set(recordMicToo, forKey: "appAudioRecordMic") }
-    }
 
     static var isSupported: Bool {
         if #available(macOS 14.4, *) { return true }
@@ -38,8 +36,8 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     private var segmentStartedAt: Date?
 
     private weak var store: LibraryStore?
-    private weak var settings: AppSettings?
-    private weak var transcriber: TranscriptionManager?
+    private var folderID: UUID?
+    private var onFinished: ((Recording) -> Void)?
 
     // Availability-gated internals, stored untyped so this class stays
     // usable on macOS 14.0.
@@ -56,11 +54,6 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     private var session: TapRecordingSession? {
         get { _session as? TapRecordingSession }
         set { _session = newValue }
-    }
-
-    override init() {
-        recordMicToo = UserDefaults.standard.object(forKey: "appAudioRecordMic") as? Bool ?? true
-        super.init()
     }
 
     private static let unsupportedMessage = "Recording app audio requires macOS 14.4 or later."
@@ -93,14 +86,12 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     // MARK: - Recording
 
     /// Starts capturing `app`'s audio, or all system audio when nil.
-    /// - Parameter withMic: whether to also record the microphone;
-    ///   nil = the menu bar's "Also Record My Microphone" preference.
     func start(
         app: AudioProcess?,
-        withMic: Bool? = nil,
+        withMic: Bool,
         store: LibraryStore,
-        settings: AppSettings,
-        transcriber: TranscriptionManager
+        folderID: UUID? = nil,
+        onFinished: ((Recording) -> Void)? = nil
     ) {
         guard !isRecording, !isSaving else { return }
         guard #available(macOS 14.4, *) else {
@@ -108,21 +99,19 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             return
         }
         self.store = store
-        self.settings = settings
-        self.transcriber = transcriber
+        self.folderID = folderID
+        self.onFinished = onFinished
         lastError = nil
 
         let target: CaptureTarget = app.map { .app($0) } ?? .systemAudio
-        // Remembered so the ⌘⌥R hotkey repeats the last choice.
-        UserDefaults.standard.set(app?.id ?? "", forKey: "appAudioLastTarget")
         let session = TapRecordingSession(
             target: target,
-            baseDirectory: FileManager.default.temporaryDirectory
+            baseDirectory: store.recoveryRootURL
         )
         session.onSuspectedPermissionDenial = { [weak self] in
             self?.lastError = Self.permissionMessage
         }
-        let wantsMic = withMic ?? recordMicToo
+        let wantsMic = withMic
         do {
             try session.start(withMic: wantsMic)
         } catch {
@@ -139,28 +128,14 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         segmentStartedAt = startedAt
         elapsed = 0
         levels = []
+        appLevel = 0
+        micLevel = 0
         isPaused = false
         isRecording = true
         startTimer()
 
         if wantsMic && !session.hasMicTrack {
             lastError = "Microphone track couldn't start — recording app audio only."
-        }
-    }
-
-    /// ⌘⌥R behavior: stop if recording, otherwise start with the last-used
-    /// target (falling back to System Audio if that app is gone).
-    func toggleFromHotkey(store: LibraryStore, settings: AppSettings, transcriber: TranscriptionManager) {
-        if isRecording {
-            stop()
-            return
-        }
-        guard !isSaving else { return }
-        Task {
-            await refreshApps()
-            let savedID = UserDefaults.standard.string(forKey: "appAudioLastTarget") ?? ""
-            let app = savedID.isEmpty ? nil : availableApps.first { $0.id == savedID }
-            start(app: app, store: store, settings: settings, transcriber: transcriber)
         }
     }
 
@@ -172,6 +147,8 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         }
         segmentStartedAt = nil
         isPaused = true
+        appLevel = 0
+        micLevel = 0
     }
 
     func resume() {
@@ -196,6 +173,9 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         let micOffset = session.micOffsetSeconds ?? 0
         let sessionDirectory = session.directory
         let startDate = startedAt
+        let destinationFolder = folderID
+        let finished = onFinished
+        onFinished = nil
 
         guard duration > 0.5 else {
             try? FileManager.default.removeItem(at: sessionDirectory)
@@ -230,33 +210,20 @@ final class AppAudioRecorder: NSObject, ObservableObject {
                 }
             }
 
+            var tracks = ["track-app.m4a": repairedAppURL]
+            if let micURL { tracks["track-mic.m4a"] = micURL }
+            if repairedAppURL != appURL { tracks["track-app-raw.m4a"] = appURL }
             let recording = self.store?.addRecordedFile(
-                at: finalURL, duration: duration, startedAt: startDate, title: title
+                at: finalURL, duration: duration, startedAt: startDate, title: title,
+                folderID: destinationFolder, rawTracks: tracks
             )
-            // Keep the raw per-source tracks next to the mix as insurance:
-            // if a mixdown is ever mistimed or needs re-balancing, the
-            // originals are still on disk (Show in Finder to reach them).
-            if let recording, let store = self.store {
-                let fm = FileManager.default
-                let folder = store.folderURL(for: recording.id)
-                if fm.fileExists(atPath: repairedAppURL.path) {
-                    try? fm.copyItem(at: repairedAppURL, to: folder.appendingPathComponent("track-app.m4a"))
-                }
-                if let micURL, fm.fileExists(atPath: micURL.path) {
-                    try? fm.copyItem(at: micURL, to: folder.appendingPathComponent("track-mic.m4a"))
-                }
-                if repairedAppURL != appURL, fm.fileExists(atPath: appURL.path) {
-                    try? fm.copyItem(at: appURL, to: folder.appendingPathComponent("track-app-raw.m4a"))
-                }
+            // LibraryStore owns cleanup, after all audio and metadata writes
+            // succeed. Failures leave the complete capture available for retry.
+            if recording == nil {
+                self.lastError = self.store?.lastError ?? "Captured files are kept in Recovery."
             }
-            try? FileManager.default.removeItem(at: sessionDirectory)
             self.isSaving = false
-
-            if let recording, let store = self.store, let settings = self.settings,
-               let transcriber = self.transcriber,
-               settings.autoTranscribe, settings.hasAPIKey {
-                transcriber.transcribe(recording, store: store, settings: settings)
-            }
+            if let recording { finished?(recording) }
         }
     }
 
@@ -282,7 +249,9 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             elapsed = accumulated
         }
         if #available(macOS 14.4, *), let session, !isPaused {
-            levels.append(session.takeRecentPeak())
+            appLevel = session.takeRecentPeak()
+            micLevel = session.takeRecentMicPeak()
+            levels.append(appLevel)
         }
     }
 

@@ -10,6 +10,7 @@ let package = Package(
         .executableTarget(
             name: "V2T",
             path: "Sources/V2T"
-        )
+        ),
+        .testTarget(name: "V2TTests", dependencies: ["V2T"])
     ]
 )

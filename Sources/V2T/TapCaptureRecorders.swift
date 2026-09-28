@@ -261,6 +261,7 @@ final class MicTrackRecorder {
 
     private let engine = AVAudioEngine()
     private var file: AVAudioFile?
+    var onBuffer: ((Float) -> Void)?
 
     /// Host time of the first captured buffer (for cross-track alignment).
     private(set) var firstBufferHostTime: UInt64?
@@ -303,6 +304,7 @@ final class MicTrackRecorder {
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, when in
             guard let self, !self.isPaused else { return }
+            self.onBuffer?(ProcessTapRecorder.peak(of: buffer))
             if self.firstBufferHostTime == nil {
                 self.firstBufferHostTime = when.hostTime
             }

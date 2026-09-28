@@ -24,6 +24,14 @@ struct AppAudioSessionView: View {
         } else {
             VStack(spacing: 0) {
                 header
+                HStack(spacing: 24) {
+                    levelMeter("App audio", level: appAudio.appLevel)
+                    if appAudio.sessionHasMic {
+                        levelMeter("Microphone", level: appAudio.micLevel)
+                    } else {
+                        Label("Microphone off", systemImage: "mic.slash").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.padding(.horizontal, 24).padding(.top, 12)
 
                 LiveWaveformView(
                     levels: appAudio.levels,
@@ -81,6 +89,14 @@ struct AppAudioSessionView: View {
         }
         .padding(.top, 16)
         .padding(.horizontal, 24)
+    }
+
+    private func levelMeter(_ name: String, level: Float) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(name).font(.caption).foregroundStyle(.secondary)
+            ProgressView(value: min(1, max(0, Double(level).squareRoot())))
+                .accessibilityLabel("\(name) level")
+        }
     }
 
     private var bottomBar: some View {

@@ -6,7 +6,7 @@ import Foundation
 /// package dependency (the KeyboardShortcuts package can't build with
 /// Command Line Tools alone because its source contains #Preview macros).
 ///
-/// - ⌘⌥R: start app-audio recording (last-used target, else System Audio)
+/// - ⌘⌥R: start recording with the shared source configuration
 ///   or stop the current one.
 /// - ⌘⌥P: pause/resume the current recording.
 @MainActor
@@ -20,24 +20,15 @@ enum AppAudioHotkeys {
     private static let toggleRecordingID: UInt32 = 1
     private static let togglePauseID: UInt32 = 2
 
-    static func install(
-        appAudio: AppAudioRecorder,
-        store: LibraryStore,
-        settings: AppSettings,
-        transcriber: TranscriptionManager
-    ) {
+    static func install(coordinator: RecordingCoordinator) {
         guard !installed else { return }
         installed = true
 
         actions[toggleRecordingID] = {
-            appAudio.toggleFromHotkey(store: store, settings: settings, transcriber: transcriber)
+            coordinator.toggleRecording()
         }
         actions[togglePauseID] = {
-            if appAudio.isPaused {
-                appAudio.resume()
-            } else if appAudio.isRecording {
-                appAudio.pause()
-            }
+            coordinator.togglePause()
         }
 
         var eventType = EventTypeSpec(

@@ -114,7 +114,9 @@ final class TranscriptionManager: ObservableObject {
                 try Task.checkCancellation()
 
                 let transcript = Transcript.build(fromChunks: results, sourceFileName: fileName)
-                store.saveTranscript(transcript, for: id)
+                if !store.saveTranscript(transcript, for: id) {
+                    self.errors[id] = store.lastError ?? "Couldn't save the transcript. Try transcribing again."
+                }
                 self.active[id] = nil
                 self.tasks[id] = nil
             } catch is CancellationError {

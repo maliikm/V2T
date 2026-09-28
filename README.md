@@ -6,8 +6,10 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 
 - **Recording library** — a permanent recordings-list column with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
 - **Folders** — a collapsible folder sidebar (toolbar sidebar button) with All Recordings, Favorites, and your own folders: create, rename, delete, and move recordings between them; new recordings land in the folder you're viewing.
-- **Record** — red record button at the bottom of the recordings list, with a **source dropdown** beside it: **Microphone**, **App Audio**, **App Audio + Mic**, or **System Audio + Mic** (app modes get an app picker; playing apps are badged). Whatever the source — including captures started from the menu bar or ⌘⌥R — the main window shows the live recording screen with waveform, pause/resume, and stop.
-- **Menu bar app-audio capture** — the V2T menu bar item records **another app's audio** (Zoom, Meet in a browser, etc.) or all system audio using **Core Audio process taps** (ported from the DesktopAudio project). Pick "Record System Audio" or a specific app (apps currently playing audio are badged and float to the top), pause/resume, stop from the same menu, and the capture lands in the library and auto-transcribes. With **Also Record My Microphone** on (default), your mic is captured as a second, sample-aligned track and mixed in on stop — so a meeting recording contains both the other participants *and* you. The capture survives output-device switches (AirPods → speakers) and browser helper-process churn, and detects silent permission denials. Global hotkeys: **⌘⌥R** starts/stops capture from anywhere (repeating your last target, else System Audio) and **⌘⌥P** pauses/resumes. Requires **macOS 14.4+** and the **System Audio Recording** permission (System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only). The menu bar item keeps working with the main window closed.
+- **Recording setup** — click the source summary above Record to open a native popover with **Microphone**, **Application**, and **All Mac Audio** cards. Application mode has a searchable, alphabetically stable list with icons, audio-activity hints, and a selected checkmark. **Include my microphone** is independent of the app/Mac source. The summary makes the selection explicit; an unavailable app never falls back to another app or all Mac audio. Browser capture includes all audio from that browser, not just a meeting tab.
+- **One recording workflow** — the main window, menu-bar panel, and global shortcuts share the same source, mic choice, and active recording. **⌘⌥R** starts/stops; **⌘⌥P** pauses/resumes. Every engine saves into the folder selected at the start of the take, and the saved recording is selected automatically. App/Mac sessions show separate app and microphone meters. Quit is blocked while recording or saving.
+- **App and Mac audio** — Core Audio process taps capture a selected app or the whole system, with optional microphone mixdown and preserved raw tracks. Requires macOS 14.4+ and System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Microphone access is requested only when needed. The menu-bar panel keeps working with the main window closed.
+- **Save recovery** — captures stay in `~/Library/Application Support/V2T/Recovery/` until audio, raw tracks, and metadata are installed successfully. A failed save exposes **Retry Save** and **Show Files** in the main window. Retry also works after relaunch when the capture manifest was saved. Interrupted captures without a manifest remain available for manual import. Metadata and transcript write errors are surfaced instead of reporting success; a failed edit keeps the original audio and editor working file.
 - **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
 - **Playback** — overview waveform with click-to-seek, a zoomed scrubbing waveform view (toggle with the waveform/transcript toolbar button; drag it to scrub), big time counter, ±15 s skip, play/pause, and **Space** to play/pause anywhere (except while typing in a text field).
 - **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
@@ -25,7 +27,7 @@ A native macOS app modeled on Apple Voice Memos, with one big upgrade: recording
 ## Run it
 
 ```bash
-git clone https://github.com/maliikm/V2T.git
+git clone --branch main https://github.com/maliikm/V2T.git
 cd V2T
 swift run
 ```
@@ -44,7 +46,19 @@ Set your fal.ai API key in **Settings (⌘,)**.
 - The model is ElevenLabs **Scribe v2** on fal — the most accurate speech-to-text on fal, with built-in diarization.
 - **Set the number of speakers** (per recording in the transcript pane, or a default in Settings). A known speaker count is far more reliable than auto-detection.
 - fal's Scribe endpoints cap a single request at 20 minutes, so longer recordings are split into ~19-minute chunks overlapping by 2 minutes, transcribed in parallel, and stitched back together; speaker labels are matched across boundaries using the overlap. If someone is silent through an entire overlap window they can come back as a new "Speaker N" — give both chips the same name and exports read correctly.
-- Editing audio (trim/delete) invalidates the transcript; re-transcribe from the transcript pane.
+- Trim/Delete retime the existing transcript. Replace/Resume add new speech and require re-transcription.
+
+## Verify changes
+
+With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio bytes, never your recordings, microphone, Keychain, or transcription account. Tests cover source persistence/migration, exact app selection, overlapping start requests, recovery after metadata/track failures, safe edits, and transcript write errors.
+
+Before relying on a long recording, run these hardware smoke checks on your Mac:
+
+1. Record a short microphone take; pause/resume using ⌘⌥P and stop with ⌘⌥R. Confirm it appears in the selected folder and plays back.
+2. Select a playing app, then try mic off and mic on. Check the separate meters and both sides of the saved audio. Repeat with All Mac Audio.
+3. Change the source in the menu bar and verify the main-window summary matches. Quit the selected application before starting; V2T should require a new selection, never broaden capture.
+4. Close the main window, start/stop from the menu bar, then reopen V2T and check the saved item. Test microphone denial, system-audio denial, and your usual output-device switch.
+5. If a real save fails, free disk space or restore write access, then use Retry Save. Keep the Recovery files until playback of the recovered item is verified.
 
 ## Costs
 

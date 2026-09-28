@@ -77,7 +77,6 @@ final class AudioEditSession: NSObject, ObservableObject {
         guard isActive else { return }
         if isReplacing { cancelReplace() }
         if commit, let final = workingURL, let id = recordingID {
-            tempFiles.remove(final)
             // Trim/Delete are pure time edits — the transcript survives by
             // retiming. Replace/Resume changes content, so it invalidates.
             let editOps = ops
@@ -96,7 +95,11 @@ final class AudioEditSession: NSObject, ObservableObject {
                     }
                 }
             }
-            store.replaceAudio(for: id, with: final, duration: workingDuration, transcriptTransform: transform)
+            guard store.replaceAudio(for: id, with: final, duration: workingDuration, transcriptTransform: transform) else {
+                error = store.lastError
+                return
+            }
+            tempFiles.remove(final)
         }
         for file in tempFiles {
             try? FileManager.default.removeItem(at: file)

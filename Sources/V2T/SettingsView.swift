@@ -52,7 +52,7 @@ struct SettingsView: View {
             } header: {
                 Text("Shortcuts")
             } footer: {
-                Text("Global shortcuts — they work in any app. Start/stop repeats your last capture target (or System Audio).")
+                Text("Global shortcuts work in any app. Start/stop uses the same source and microphone choice as the main window and menu bar. An unavailable app must be reselected; it never falls back to all Mac audio.")
                     .foregroundStyle(.secondary)
             }
         }
