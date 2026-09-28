@@ -7,6 +7,7 @@ struct ZoomedWaveformView: View {
     let data: WaveformData?
     let currentTime: Double
     let duration: Double
+    var selection: ClosedRange<Double>? = nil
     var onSeek: (Double) -> Void
 
     private let pixelsPerSecond: CGFloat = 80
@@ -35,6 +36,25 @@ struct ZoomedWaveformView: View {
                 Path(CGRect(x: 0, y: 0, width: centerX, height: rulerY - 4)),
                 with: .color(Color.primary.opacity(0.035))
             )
+
+            if let selection {
+                let startX = centerX + CGFloat(selection.lowerBound - currentTime) * pixelsPerSecond
+                let endX = centerX + CGFloat(selection.upperBound - currentTime) * pixelsPerSecond
+                let left = max(0, startX)
+                let right = min(size.width, endX)
+                if right > left {
+                    context.fill(
+                        Path(CGRect(x: left, y: 0, width: right - left, height: rulerY - 4)),
+                        with: .color(Color.yellow.opacity(0.22))
+                    )
+                }
+                for edge in [startX, endX] where edge >= 0 && edge <= size.width {
+                    context.fill(
+                        Path(CGRect(x: edge, y: 0, width: 1, height: rulerY - 4)),
+                        with: .color(.yellow)
+                    )
+                }
+            }
 
             // Bars every 3pt; each bar shows the peak of its time slice.
             let step: CGFloat = 3
@@ -81,15 +101,15 @@ struct ZoomedWaveformView: View {
             // Fixed playhead with dot caps.
             context.fill(
                 Path(CGRect(x: centerX - 1, y: 6, width: 2, height: rulerY - 10)),
-                with: .color(Color.accentColor)
+                with: .color(selection == nil ? Color.accentColor : .yellow)
             )
             context.fill(
                 Path(ellipseIn: CGRect(x: centerX - 4, y: 0, width: 8, height: 8)),
-                with: .color(Color.accentColor)
+                with: .color(selection == nil ? Color.accentColor : .yellow)
             )
             context.fill(
                 Path(ellipseIn: CGRect(x: centerX - 4, y: rulerY - 6, width: 8, height: 8)),
-                with: .color(Color.accentColor)
+                with: .color(selection == nil ? Color.accentColor : .yellow)
             )
         }
         .contentShape(Rectangle())

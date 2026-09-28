@@ -31,6 +31,7 @@ final class AudioEditSession: NSObject, ObservableObject {
     }
 
     private var recordingID: UUID?
+    private var sessionToken = UUID()
     private var originalURL: URL?
     /// nil while the audio is still the untouched original.
     private var workingURL: URL?
@@ -59,6 +60,7 @@ final class AudioEditSession: NSObject, ObservableObject {
 
     func begin(recording: Recording, store: LibraryStore, player: AudioPlayerController, initialWaveform: WaveformData?) {
         guard !isActive else { return }
+        sessionToken = UUID()
         recordingID = recording.id
         originalURL = store.audioURL(for: recording)
         self.player = player
@@ -107,6 +109,8 @@ final class AudioEditSession: NSObject, ObservableObject {
             }
             tempFiles.remove(final)
         }
+        sessionToken = UUID()
+        if let id = recordingID { player?.unloadIfLoaded(id) }
         for file in tempFiles {
             try? FileManager.default.removeItem(at: file)
         }
@@ -140,8 +144,10 @@ final class AudioEditSession: NSObject, ObservableObject {
         error = nil
         isProcessing = true
         let keepTime = player?.currentTime ?? 0
+        let token = sessionToken
         Task {
             await refreshDerived(seekTo: keepTime)
+            guard sessionToken == token, isActive else { return }
             isProcessing = false
         }
     }
@@ -158,6 +164,7 @@ final class AudioEditSession: NSObject, ObservableObject {
 
     func applyTrim(keepSelection: Bool) async {
         guard isActive, !isProcessing, !isReplacing, let base = currentURL else { return }
+        let token = sessionToken
         let selection = trimSelection
         guard keepSelection ? selection.canKeep : selection.canRemove else {
             error = selection.selectedDuration < TrimSelection.minimumDuration
@@ -178,6 +185,10 @@ final class AudioEditSession: NSObject, ObservableObject {
                 result = try await AudioEditor.deleteRange(url: base, removing: range, totalDuration: workingDuration)
             }
             let newDuration = await AudioEditor.duration(of: result)
+            guard sessionToken == token, isActive else {
+                try? FileManager.default.removeItem(at: result)
+                return
+            }
             guard newDuration > 0.1 else {
                 error = "That edit would leave no audio."
                 try? FileManager.default.removeItem(at: result)
@@ -189,8 +200,10 @@ final class AudioEditSession: NSObject, ObservableObject {
             selectionEnd = 1
             await refreshDerived(seekTo: keepSelection ? 0 : range.lowerBound)
         } catch {
+            guard sessionToken == token, isActive else { return }
             self.error = error.localizedDescription
         }
+        guard sessionToken == token, isActive else { return }
         isProcessing = false
     }
 
@@ -297,9 +310,11 @@ final class AudioEditSession: NSObject, ObservableObject {
     /// the shared player.
     private func refreshDerived(seekTo: Double?) async {
         guard let url = currentURL, let id = recordingID else { return }
+        let token = sessionToken
         let duration = await AudioEditor.duration(of: url)
-        if duration > 0 { workingDuration = duration }
         let waveform = try? await WaveformLoader.load(audioURL: url, cacheURL: nil)
+        guard sessionToken == token, isActive else { return }
+        if duration > 0 { workingDuration = duration }
         workingWaveform = waveform
         if let player {
             player.unloadIfLoaded(id)

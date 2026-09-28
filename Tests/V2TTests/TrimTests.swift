@@ -1,5 +1,7 @@
 import AVFoundation
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import V2T
 
@@ -56,6 +58,30 @@ struct TrimSelectionTests {
 /// Generated silent WAV fixtures exercise AVFoundation, not capture hardware.
 @MainActor
 struct TrimAudioTests {
+    /// Optional visual smoke check, isolated from the user's running app/library.
+    private func renderPreviews(session: AudioEditSession, recording: Recording, store: LibraryStore,
+                                player: AudioPlayerController) throws {
+        guard let directory = ProcessInfo.processInfo.environment["V2T_TRIM_PREVIEW_DIRECTORY"] else { return }
+        _ = NSApplication.shared
+        session.showTrimTool = true
+        session.selectionStart = 0.2
+        session.selectionEnd = 0.8
+        defer { session.selectionStart = 0; session.selectionEnd = 1 }
+        for width in [900, 430] {
+            let content = EditModeView(session: session, recording: recording, onDone: {})
+                .environmentObject(store).environmentObject(player)
+                .frame(width: CGFloat(width), height: 480).background(Color.white)
+            let view = NSHostingView(rootView: content)
+            view.appearance = NSAppearance(named: .aqua)
+            view.frame = NSRect(x: 0, y: 0, width: width, height: 480)
+            view.layoutSubtreeIfNeeded()
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("trim-\(width).png"))
+        }
+    }
+
     private func writeAudio(to url: URL) throws {
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 192_000))
@@ -85,8 +111,10 @@ struct TrimAudioTests {
         #expect(store.saveTranscript(transcript, for: recording.id))
         let player = AudioPlayerController()
         let session = AudioEditSession()
-        session.begin(recording: recording, store: store, player: player, initialWaveform: nil)
+        let waveform = WaveformData(samples: (0..<1000).map { Float(0.1 + abs(sin(Double($0) * 0.22)) * 0.3) }, duration: 4)
+        session.begin(recording: recording, store: store, player: player, initialWaveform: waveform)
         defer { session.end(commit: false, store: store) }
+        try renderPreviews(session: session, recording: recording, store: store, player: player)
 
         // Removing all audio is rejected without touching either working or saved audio.
         await session.applyTrim(keepSelection: false)
@@ -124,5 +152,46 @@ struct TrimAudioTests {
         #expect(retimed.provider == "deepgram")
         let audioDuration = await AudioEditor.duration(of: store.audioURL(for: saved))
         #expect(abs(audioDuration - 2) < 0.06)
+    }
+
+    @Test(arguments: [false, true])
+    func cancellingTrimPreservesOriginalAndCannotMutateNextSession(duringExport: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("V2TTrimCancel-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("generated.wav")
+        try writeAudio(to: source)
+        let store = LibraryStore(rootURL: root.appendingPathComponent("Library"))
+        let imported = await store.importAudio(from: source)
+        let recording = try #require(imported)
+        let original = try Data(contentsOf: store.audioURL(for: recording))
+        let transcript = Transcript(sourceFileName: "generated.wav", languageCode: "en",
+            segments: [TranscriptSegment(speakerId: "speaker_0", start: 1, end: 2, text: "Unchanged")],
+            speakerIds: ["speaker_0"], words: nil)
+        #expect(store.saveTranscript(transcript, for: recording.id))
+        let player = AudioPlayerController()
+        let session = AudioEditSession()
+        session.begin(recording: recording, store: store, player: player, initialWaveform: nil)
+        session.showTrimTool = true
+        session.setSelectionStart(seconds: 1)
+        session.setSelectionEnd(seconds: 3)
+        let task = Task { await session.applyTrim(keepSelection: true) }
+        if duringExport {
+            for _ in 0..<100 where !session.isProcessing && !session.hasEdits { await Task.yield() }
+            #expect(session.isProcessing)
+        } else {
+            await task.value
+            #expect(session.hasEdits)
+        }
+        session.end(commit: false, store: store)
+        #expect(!session.isActive && !session.hasEdits)
+        session.begin(recording: recording, store: store, player: player, initialWaveform: nil)
+        await task.value
+        #expect(session.isActive && !session.hasEdits && !session.isProcessing)
+        #expect(session.error == nil)
+        #expect(session.workingDuration == recording.duration)
+        #expect(try Data(contentsOf: store.audioURL(for: recording)) == original)
+        #expect(store.transcript(for: recording.id) == transcript)
+        session.end(commit: false, store: store)
     }
 }

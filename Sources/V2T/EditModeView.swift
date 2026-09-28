@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// Explicit time selection, keep/remove actions, and a separate transport.
-/// Keeping and removing are previewable edits; Save Changes ends edit mode.
+/// Waveform-first editing, with a compact Voice Memos-style trim mode.
 struct EditModeView: View {
     @ObservedObject var session: AudioEditSession
     let recording: Recording
-    /// Called after Done commits and ends the session.
     var onDone: () -> Void
 
     @EnvironmentObject var store: LibraryStore
@@ -14,86 +12,40 @@ struct EditModeView: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(spacing: 10) {
+                VStack(spacing: 18) {
                     ZoomedWaveformView(
                         data: session.workingWaveform,
                         currentTime: player.currentTime,
-                        duration: session.workingDuration
+                        duration: session.workingDuration,
+                        selection: session.showTrimTool ? session.trimSelection.range : nil
                     ) { time in
-                        guard !session.isReplacing else { return }
+                        guard !session.isReplacing, !session.isProcessing else { return }
                         player.seek(to: time)
                     }
-                    .frame(height: max(96, geometry.size.height - (session.showTrimTool ? 500 : 300)))
+                    .frame(height: max(120, geometry.size.height - 250))
                     .padding(.top, 8)
 
-                    if session.showTrimTool {
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Label("Trim Audio", systemImage: "scissors").font(.headline)
-                                Spacer()
-                                Button("Hide Trim") { session.showTrimTool = false }
-                                    .help("Hide the selection controls without undoing edits")
-                            }
-                            Text("Drag the handles or enter start and end times in seconds.")
-                                .font(.caption).foregroundStyle(.secondary)
+                    VStack(spacing: 6) {
+                        if session.showTrimTool {
                             TrimSelectionView(
                                 waveform: session.workingWaveform,
                                 selectionStart: $session.selectionStart,
                                 selectionEnd: $session.selectionEnd,
                                 minimumSelection: session.trimSelection.minimumFraction,
                                 progress: progressFraction,
+                                duration: session.workingDuration,
                                 onSeek: { fraction in
-                                    guard !session.isReplacing else { return }
+                                    guard !session.isProcessing else { return }
                                     player.seek(to: fraction * session.workingDuration)
                                 }
                             )
-                            .frame(height: 56)
-                            selectionInputs
-                            Text("Selected: \(TranscriptFormatter.clock(session.trimSelection.selectedDuration))")
-                                .font(.caption.weight(.medium)).monospacedDigit()
-                            HStack(alignment: .top, spacing: 16) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Button("Keep Selection") {
-                                        Task { await session.applyTrim(keepSelection: true) }
-                                    }
-                                    .font(.callout.weight(.medium)).foregroundStyle(.primary)
-                                    .disabled(!session.trimSelection.canKeep)
-                                    Text("Remove audio outside the selection.")
-                                    Text(
-                                        "Result: \(TranscriptFormatter.clock(session.trimSelection.selectedDuration))"
-                                    ).monospacedDigit()
-                                }
-                                Spacer(minLength: 0)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Button("Remove Selection") {
-                                        Task { await session.applyTrim(keepSelection: false) }
-                                    }
-                                    .font(.callout.weight(.medium)).foregroundStyle(.primary)
-                                    .disabled(!session.trimSelection.canRemove)
-                                    Text("Cut this section and join the rest.")
-                                    Text(
-                                        "Result: \(TranscriptFormatter.clock(session.trimSelection.remainingDuration))"
-                                    ).monospacedDigit()
-                                }
-                            }.font(.caption).foregroundStyle(.secondary)
-                            if !session.trimSelection.canKeep && !session.trimSelection.canRemove {
-                                Text(
-                                    "Select part of the recording to enable an edit. At least 0.2 seconds must remain."
-                                )
-                                .font(.caption).foregroundStyle(.secondary)
+                            .disabled(session.isProcessing)
+                        } else {
+                            WaveformView(data: session.workingWaveform, progress: progressFraction) { fraction in
+                                guard !session.isReplacing, !session.isProcessing else { return }
+                                player.seek(to: fraction * session.workingDuration)
                             }
                         }
-                        .padding(12)
-                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.horizontal, 24)
-                        .disabled(session.isProcessing || session.isReplacing)
-                    } else {
-                        WaveformView(data: session.workingWaveform, progress: progressFraction) { fraction in
-                            guard !session.isReplacing else { return }
-                            player.seek(to: fraction * session.workingDuration)
-                        }
-                        .frame(height: 56)
-                        .padding(.horizontal, 24)
                         HStack {
                             Text("0:00")
                             Spacer()
@@ -101,21 +53,17 @@ struct EditModeView: View {
                         }
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 24)
                     }
+                    .frame(height: 68)
+                    .padding(.horizontal, 24)
 
-                    Text(
-                        TranscriptFormatter.clock(
-                            session.isReplacing ? session.replaceElapsed : player.currentTime)
-                    )
-                    .font(.system(size: 40, weight: .bold).monospacedDigit())
-                    .foregroundStyle(session.isReplacing ? Color.red : Color.primary)
+                    Text(TranscriptFormatter.clock(session.isReplacing ? session.replaceElapsed : player.currentTime))
+                        .font(.system(size: 34, weight: .bold).monospacedDigit())
+                        .foregroundStyle(session.isReplacing ? Color.red : Color.primary)
 
                     if let error = session.error {
-                        Text(error)
-                            .foregroundStyle(.red)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
+                        Text(error).foregroundStyle(.red)
+                            .multilineTextAlignment(.center).padding(.horizontal, 24)
                     }
 
                     bottomRow
@@ -125,90 +73,99 @@ struct EditModeView: View {
         }
     }
 
-    // MARK: - Pieces
-
     private var progressFraction: Double {
         guard session.workingDuration > 0 else { return 0 }
         return min(1, max(0, player.currentTime / session.workingDuration))
     }
 
-    private var selectionInputs: some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Start (seconds)").font(.caption)
-                TextField(
-                    "Start (seconds)",
-                    value: Binding(
-                        get: { session.trimSelection.range.lowerBound },
-                        set: { session.setSelectionStart(seconds: $0) }),
-                    format: .number.precision(.fractionLength(2))
-                )
-                .accessibilityLabel("Selection start in seconds")
+    private var transport: some View {
+        HStack(spacing: 22) {
+            Button {
+                player.skip(-15)
+            } label: {
+                Image(systemName: "gobackward.15").font(.title2)
+            }.help("Back 15 seconds").accessibilityLabel("Back 15 seconds")
+            Button {
+                player.togglePlay()
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 24)).frame(width: 32, height: 32)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("End (seconds)").font(.caption)
-                TextField(
-                    "End (seconds)",
-                    value: Binding(
-                        get: { session.trimSelection.range.upperBound },
-                        set: { session.setSelectionEnd(seconds: $0) }),
-                    format: .number.precision(.fractionLength(2))
-                )
-                .accessibilityLabel("Selection end in seconds")
+            .help(player.isPlaying ? "Pause playback" : "Play audio")
+            .accessibilityLabel(player.isPlaying ? "Pause playback" : "Play audio")
+            Button {
+                player.skip(15)
+            } label: {
+                Image(systemName: "goforward.15").font(.title2)
+            }.help("Forward 15 seconds").accessibilityLabel("Forward 15 seconds")
+        }
+        .buttonStyle(.plain)
+        .disabled(session.isReplacing || session.isProcessing)
+    }
+
+    private var trimActions: some View {
+        HStack(spacing: 8) {
+            Button("Trim") { Task { await session.applyTrim(keepSelection: true) } }
+                .disabled(!session.trimSelection.canKeep)
+                .help("Keep the selection and remove audio outside it")
+                .accessibilityLabel("Trim to selection")
+            Button("Delete") { Task { await session.applyTrim(keepSelection: false) } }
+                .disabled(!session.trimSelection.canRemove)
+                .help("Remove the selection and join the remaining audio")
+                .accessibilityLabel("Delete selected audio")
+        }
+        .disabled(session.isProcessing)
+    }
+
+    private var finishActions: some View {
+        HStack(spacing: 8) {
+            if session.isProcessing { ProgressView().controlSize(.small) }
+            if session.showTrimTool {
+                Button("Cancel") { finish(commit: false) }
+                    .help("Discard unsaved audio edits")
+                Button("Apply") { finish(commit: true) }
+                    .disabled(!session.hasEdits)
+                    .help("Save the edited audio")
+            } else {
+                Button(session.hasEdits ? "Save Changes" : "Done") { finish(commit: true) }
             }
-        }.textFieldStyle(.roundedBorder).monospacedDigit()
+        }
+        .disabled(session.isReplacing || session.isProcessing)
+    }
+
+    private func finish(commit: Bool) {
+        player.pause()
+        session.end(commit: commit, store: store)
+        if !session.isActive { onDone() }
     }
 
     private var bottomRow: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 28) {
-                Button {
-                    player.skip(-15)
-                } label: {
-                    Image(systemName: "gobackward.15").font(.title2)
-                }.help("Back 15 seconds").accessibilityLabel("Back 15 seconds")
-                Button {
-                    player.togglePlay()
-                } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 26))
-                        .frame(width: 40, height: 40)
-                }.help(player.isPlaying ? "Pause playback" : "Play audio")
-                    .accessibilityLabel(player.isPlaying ? "Pause playback" : "Play audio")
-                Button {
-                    player.skip(15)
-                } label: {
-                    Image(systemName: "goforward.15").font(.title2)
-                }.help("Forward 15 seconds").accessibilityLabel("Forward 15 seconds")
-            }
-            .buttonStyle(.plain)
-            .disabled(session.isReplacing || session.isProcessing)
-
+        ViewThatFits(in: .horizontal) {
             HStack {
-                if session.showTrimTool {
-                    Button {
-                        session.undo()
-                    } label: {
-                        Label("Undo Edit", systemImage: "arrow.uturn.backward")
-                    }
-                    .disabled(!session.canUndo || session.isProcessing)
-                } else {
-                    replaceControl
-                }
-                Spacer()
-                if session.isProcessing { ProgressView().controlSize(.small) }
-                Button(session.hasEdits ? "Save Changes" : "Done") {
-                    session.end(commit: true, store: store)
-                    if !session.isActive { onDone() }
-                }
-                .controlSize(.large)
-                .disabled(session.isReplacing || session.isProcessing)
-                .help(session.hasEdits ? "Save the edited audio and leave edit mode" : "Leave edit mode")
+                leadingActions.frame(width: 170, alignment: .leading)
+                Spacer(minLength: 12)
+                transport.frame(width: 170)
+                Spacer(minLength: 12)
+                finishActions.frame(width: 170, alignment: .trailing)
             }
-            Text("Undo reverses your last edit. Edits save when you finish or switch recordings.")
-                .font(.caption).foregroundStyle(.secondary)
+            VStack(spacing: 14) {
+                transport
+                HStack {
+                    leadingActions
+                    Spacer(minLength: 12)
+                    finishActions
+                }
+            }
         }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
         .padding(.horizontal, 24)
+    }
+
+    @ViewBuilder
+    private var leadingActions: some View {
+        if session.showTrimTool { trimActions } else { replaceControl }
     }
 
     @ViewBuilder
@@ -253,7 +210,7 @@ struct EditModeView: View {
     }
 }
 
-/// Waveform with an accent-colored selection band and labeled drag handles.
+/// Waveform with Voice Memos-style yellow selection handles.
 /// Clicking the strip outside the handles seeks playback, so a cut can be
 /// auditioned before committing; the playhead is drawn for orientation.
 struct TrimSelectionView: View {
@@ -262,6 +219,7 @@ struct TrimSelectionView: View {
     @Binding var selectionEnd: Double
     var minimumSelection: Double = 0.001
     var progress: Double = 0
+    var duration: Double = 0
     var onSeek: ((Double) -> Void)?
 
     var body: some View {
@@ -274,24 +232,32 @@ struct TrimSelectionView: View {
                 WaveformView(data: waveform, progress: progress, onSeek: onSeek)
 
                 Rectangle()
-                    .fill(Color.accentColor.opacity(0.18))
+                    .fill(Color.yellow.opacity(0.18))
                     .frame(width: max(0, endX - startX))
                     .offset(x: startX)
                     .allowsHitTesting(false)
 
                 RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(Color.accentColor, lineWidth: 2.5)
+                    .strokeBorder(Color.yellow, lineWidth: 2.5)
                     .frame(width: max(8, endX - startX))
                     .offset(x: startX)
                     .allowsHitTesting(false)
 
-                handle("Selection start", at: startX, height: geometry.size.height) { locationX in
+                handle(
+                    "Selection start", symbol: "chevron.left", fraction: selectionStart, at: startX,
+                    height: geometry.size.height, width: width
+                ) { locationX in
                     let fraction = clampedFraction(locationX, width: width)
                     selectionStart = max(0, min(fraction, selectionEnd - minimumSelection))
+                    onSeek?(selectionStart)
                 }
-                handle("Selection end", at: endX, height: geometry.size.height) { locationX in
+                handle(
+                    "Selection end", symbol: "chevron.right", fraction: selectionEnd, at: endX,
+                    height: geometry.size.height, width: width
+                ) { locationX in
                     let fraction = clampedFraction(locationX, width: width)
                     selectionEnd = min(1, max(fraction, selectionStart + minimumSelection))
+                    onSeek?(selectionEnd)
                 }
             }
             .coordinateSpace(name: "trimSelection")
@@ -304,21 +270,29 @@ struct TrimSelectionView: View {
     }
 
     private func handle(
-        _ name: String, at x: CGFloat, height: CGFloat, onDrag: @escaping (CGFloat) -> Void
+        _ name: String, symbol: String, fraction: Double, at x: CGFloat, height: CGFloat, width: CGFloat,
+        onDrag: @escaping (CGFloat) -> Void
     ) -> some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(Color.accentColor)
+            .fill(Color.yellow)
             .frame(width: 12, height: height)
             .overlay(
-                Image(systemName: "line.3.horizontal").font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white)
+                Image(systemName: symbol).font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.black)
             )
             .frame(width: 24, height: height)
             .contentShape(Rectangle())
             .offset(x: x - 12)
             .accessibilityLabel(name)
-            .accessibilityHint("Use the start and end fields below for precise times.")
-            .help("Drag to adjust \(name.lowercased())")
+            .accessibilityValue(TranscriptFormatter.clock(fraction * duration))
+            .accessibilityHint("Adjust to change the selection boundary.")
+            .accessibilityAdjustableAction { direction in
+                let delta = max(minimumSelection / 2, 0.000001)
+                let next = fraction + (direction == .increment ? delta : -delta)
+                // The same clamping path is used for dragging and VoiceOver.
+                onDrag(CGFloat(next) * width)
+            }
+            .help("\(name): \(TranscriptFormatter.clock(fraction * duration)). Drag to adjust.")
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("trimSelection"))
                     .onChanged { value in

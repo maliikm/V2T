@@ -60,10 +60,10 @@ struct DetailView: View {
             }
         }
         .onDisappear {
-            // Navigating away mid-edit commits the edits rather than
-            // silently discarding them.
+            // Trim mode is an explicit Cancel/Apply transaction. Navigation
+            // must not save a trim that the user has not applied.
             if editSession.isActive {
-                editSession.end(commit: true, store: store)
+                editSession.end(commit: !editSession.showTrimTool, store: store)
             }
         }
         .task(id: recording.audioFileName + recording.id.uuidString) {
@@ -175,14 +175,16 @@ struct DetailView: View {
                 .disabled(!editSession.canUndo || editSession.isProcessing || editSession.isReplacing)
                 .help("Undo the last edit")
 
-                Button {
-                    editSession.showTrimTool.toggle()
-                } label: {
-                    Label(editSession.showTrimTool ? "Hide Trim" : "Trim Audio", systemImage: "scissors")
+                if !editSession.showTrimTool {
+                    Button {
+                        editSession.showTrimTool = true
+                    } label: {
+                        Label("Trim Audio", systemImage: "scissors")
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .disabled(editSession.isReplacing || editSession.isProcessing)
+                    .help("Select the audio to trim or delete")
                 }
-                .labelStyle(.titleAndIcon)
-                .disabled(editSession.isReplacing || editSession.isProcessing)
-                .help("Select the audio to keep or remove")
             }
         } else {
             normalToolbar(recording)
