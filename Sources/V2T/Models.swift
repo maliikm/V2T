@@ -421,8 +421,8 @@ enum TranscriptFormatter {
         }.joined(separator: "\n\n")
     }
 
-    /// Markdown formatted for pasting into Claude for follow-up processing.
-    static func markdownForClaude(_ transcript: Transcript, names: [String: String]) -> String {
+    /// Portable Markdown with speaker labels and timestamps.
+    static func markdown(_ transcript: Transcript, names: [String: String]) -> String {
         var lines: [String] = []
         lines.append("# Meeting transcript: \(transcript.sourceFileName)")
         lines.append("")

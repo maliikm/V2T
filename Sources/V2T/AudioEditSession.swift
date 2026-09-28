@@ -2,8 +2,8 @@ import AVFoundation
 import Foundation
 
 /// State for the in-place edit mode: a working copy of the recording's
-/// audio that Trim / Delete / Replace / Resume operate on, with per-step
-/// undo. Done commits the working file back into the library; every edit
+/// audio that Keep Selection / Remove Selection / Replace / Resume operate on,
+/// with per-step undo. Save Changes commits the working file; every edit
 /// is previewed live through the shared player.
 @MainActor
 final class AudioEditSession: NSObject, ObservableObject {
@@ -48,6 +48,12 @@ final class AudioEditSession: NSObject, ObservableObject {
 
     var currentURL: URL? { workingURL ?? originalURL }
     var hasEdits: Bool { workingURL != nil }
+    var trimSelection: TrimSelection {
+        TrimSelection(duration: workingDuration, start: selectionStart, end: selectionEnd)
+    }
+
+    func setSelectionStart(seconds: Double) { selectionStart = trimSelection.movingStart(to: seconds) }
+    func setSelectionEnd(seconds: Double) { selectionEnd = trimSelection.movingEnd(to: seconds) }
 
     // MARK: - Lifecycle
 
@@ -71,8 +77,8 @@ final class AudioEditSession: NSObject, ObservableObject {
     }
 
     /// Ends the session. With `commit`, an edited working file replaces the
-    /// library audio (invalidating the transcript); otherwise edits are
-    /// discarded.
+    /// library audio, retiming the transcript for time-only edits and invalidating
+    /// it for new speech. Without `commit`, edits are discarded.
     func end(commit: Bool, store: LibraryStore) {
         guard isActive else { return }
         if isReplacing { cancelReplace() }
@@ -129,8 +135,15 @@ final class AudioEditSession: NSObject, ObservableObject {
         }
         workingURL = previous
         canUndo = !undoStack.isEmpty
+        selectionStart = 0
+        selectionEnd = 1
+        error = nil
+        isProcessing = true
         let keepTime = player?.currentTime ?? 0
-        Task { await refreshDerived(seekTo: keepTime) }
+        Task {
+            await refreshDerived(seekTo: keepTime)
+            isProcessing = false
+        }
     }
 
     private func pushWorking(_ url: URL, op: EditOp) {
@@ -144,14 +157,17 @@ final class AudioEditSession: NSObject, ObservableObject {
     // MARK: - Trim tool
 
     func applyTrim(keepSelection: Bool) async {
-        guard !isProcessing, !isReplacing, let base = currentURL else { return }
-        let lower = min(selectionStart, selectionEnd) * workingDuration
-        let upper = max(selectionStart, selectionEnd) * workingDuration
-        let range = lower...max(upper, lower + 0.01)
-        guard range.upperBound - range.lowerBound >= 0.2 else {
-            error = "Selection is too short."
+        guard isActive, !isProcessing, !isReplacing, let base = currentURL else { return }
+        let selection = trimSelection
+        guard keepSelection ? selection.canKeep : selection.canRemove else {
+            error = selection.selectedDuration < TrimSelection.minimumDuration
+                ? "Select at least 0.2 seconds of audio."
+                : keepSelection ? "Move a handle inward to choose the audio to keep."
+                : "Leave at least 0.2 seconds outside the selection. To delete the recording, use Delete Recording."
             return
         }
+        let range = selection.range
+        player?.pause()
         error = nil
         isProcessing = true
         do {

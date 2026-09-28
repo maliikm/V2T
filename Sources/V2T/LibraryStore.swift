@@ -494,7 +494,7 @@ final class LibraryStore: ObservableObject {
                 try writeData(oldData, archive.appendingPathComponent("transcript.json"))
                 try writeData(Self.encoder.encode(previousRecording), archive.appendingPathComponent("meta.json"))
                 if let old = try? Self.decoder.decode(Transcript.self, from: oldData) {
-                    let markdown = TranscriptFormatter.markdownForClaude(old, names: previousRecording.speakerNames)
+                    let markdown = TranscriptFormatter.markdown(old, names: previousRecording.speakerNames)
                     try writeData(Data(markdown.utf8), archive.appendingPathComponent("transcript.md"))
                 }
                 recording.speakerNames = [:]

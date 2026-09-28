@@ -1,5 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The right-hand pane: header, waveform/transcript area, big time counter,
 /// transport, and the Voice Memos-style toolbar.
@@ -17,7 +16,6 @@ struct DetailView: View {
     @State private var showOptions = false
     @StateObject private var editSession = AudioEditSession()
     @State private var showDeleteConfirm = false
-    @State private var showingExporter = false
     @State private var copiedFeedback = false
     @State private var titleDraft = ""
 
@@ -82,12 +80,6 @@ struct DetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .fileExporter(
-            isPresented: $showingExporter,
-            document: MarkdownDocument(text: exportMarkdown(recording)),
-            contentType: .plainText,
-            defaultFilename: "\(recording.title) transcript.md"
-        ) { _ in }
     }
 
     // MARK: - Pieces
@@ -179,16 +171,18 @@ struct DetailView: View {
                 } label: {
                     Label("Undo", systemImage: "arrow.uturn.backward")
                 }
+                .labelStyle(.titleAndIcon)
                 .disabled(!editSession.canUndo || editSession.isProcessing || editSession.isReplacing)
                 .help("Undo the last edit")
 
                 Button {
                     editSession.showTrimTool.toggle()
                 } label: {
-                    Label("Trim", systemImage: "crop")
+                    Label(editSession.showTrimTool ? "Hide Trim" : "Trim Audio", systemImage: "scissors")
                 }
-                .disabled(editSession.isReplacing)
-                .help("Select a range to trim or delete")
+                .labelStyle(.titleAndIcon)
+                .disabled(editSession.isReplacing || editSession.isProcessing)
+                .help("Select the audio to keep or remove")
             }
         } else {
             normalToolbar(recording)
@@ -209,13 +203,14 @@ struct DetailView: View {
             Button {
                 editSession.begin(recording: recording, store: store, player: player, initialWaveform: waveform)
             } label: {
-                Label("Edit", systemImage: "waveform.badge.magnifyingglass")
+                Label("Edit Audio", systemImage: "pencil")
             }
+            .labelStyle(.titleAndIcon)
             .help("Edit the audio: trim, replace, or resume recording")
             Button {
                 showDeleteConfirm = true
             } label: {
-                Label("Delete", systemImage: "trash")
+                Label("Delete Recording", systemImage: "trash")
             }
             Button {
                 showOptions.toggle()
@@ -235,13 +230,12 @@ struct DetailView: View {
 
             if recording.hasTranscript {
                 Menu {
-                    Button("Copy for Claude") { copyForClaude(recording) }
+                    Button("Copy Markdown") { copyMarkdown(recording) }
                     Button("Copy Plain Text") { copyPlainText(recording) }
-                    Button("Save as Markdown…") { showingExporter = true }
                 } label: {
-                    Label(copiedFeedback ? "Copied!" : "Export", systemImage: copiedFeedback ? "checkmark" : "sparkles")
+                    Label(copiedFeedback ? "Copied!" : "Copy Transcript", systemImage: copiedFeedback ? "checkmark" : "doc.on.doc")
                 }
-                .help("Copy the transcript for Claude, or save it")
+                .help("Copy the transcript as Markdown or plain text")
             }
         }
     }
@@ -275,10 +269,10 @@ struct DetailView: View {
 
     private func exportMarkdown(_ recording: Recording) -> String {
         guard let transcript = store.transcript(for: recording.id) else { return "" }
-        return TranscriptFormatter.markdownForClaude(transcript, names: recording.speakerNames)
+        return TranscriptFormatter.markdown(transcript, names: recording.speakerNames)
     }
 
-    private func copyForClaude(_ recording: Recording) {
+    private func copyMarkdown(_ recording: Recording) {
         copy(exportMarkdown(recording))
     }
 
@@ -296,20 +290,5 @@ struct DetailView: View {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             copiedFeedback = false
         }
-    }
-}
-
-struct MarkdownDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
-    var text: String
-
-    init(text: String) { self.text = text }
-
-    init(configuration: ReadConfiguration) throws {
-        text = String(data: configuration.file.regularFileContents ?? Data(), encoding: .utf8) ?? ""
-    }
-
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: Data(text.utf8))
     }
 }

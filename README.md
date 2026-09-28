@@ -15,8 +15,8 @@ A native macOS app modeled on Apple Voice Memos, with **speaker diarization** (w
 - **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
 - **Search** — the search field matches titles *and* transcript text.
 - **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled blocks with timestamps; long single-speaker turns are split at pauses and sentence ends so every block is a precise seek target; renameable speaker chips; **click any block to move playback there** (right-click for Play from Here / Copy Text); the current block highlights and follows during playback. Word-level timing is stored with each transcript. Recordings transcribed before this feature keep their coarse blocks — right-click → Re-transcribe to upgrade them.
-- **Edit mode** — the toolbar's Edit button switches the pane in place (waveform view is the default view): **REPLACE** records your mic over the audio from the playhead, **RESUME** appends when the playhead is at the end, and the crop tool selects a range to **Trim** (keep) or **Delete** (the selection strip shows the playhead and seeks on click, so cuts can be auditioned). Every edit is one **Undo** step; **Done** commits back to the library. **Trim/Delete keep the transcript** — it's retimed to match the edit, speaker names included; only REPLACE/RESUME (new audio content) require a re-transcribe.
-- **Share & export** — share the audio file, copy the transcript as Markdown ready for Claude, copy plain text, or save a `.md`.
+- **Edit mode** — **Edit Audio** opens the editor. **REPLACE** records your mic over audio from the playhead; **RESUME** appends at the end. **Trim Audio** opens labeled selection controls: drag the handles or enter start/end times in seconds, then choose **Keep Selection** (remove everything outside it) or **Remove Selection** (cut it out and join the rest). Each action shows the resulting duration. Use the separate playback controls to audition your edits, **Undo Edit** to reverse a step, and **Save Changes** to finish. **Hide Trim** only hides the controls; it does not undo edits. Switching recordings also saves edits. Trims preserve and retime the transcript, including speaker names; only REPLACE/RESUME require re-transcription.
+- **Share & copy** — share the audio file, or use **Copy Transcript → Copy Markdown / Copy Plain Text**. Markdown includes speaker labels and timestamps and works with any Markdown-compatible app. There is no separate Save Markdown action.
 
 ## Requirements
 
@@ -59,11 +59,11 @@ Changing providers never bulk-transcribes or modifies your library. To compare a
 - Choose between ElevenLabs **Scribe v2** on fal and Deepgram **Nova-3**. Compare representative recordings before choosing a default; accuracy and speaker assignments depend on the audio.
 - With fal, **set the number of speakers** (per recording or in Settings) to provide a diarization hint. Deepgram uses automatic speaker detection.
 - fal's Scribe endpoints cap a single request at 20 minutes, so longer recordings are split into ~19-minute chunks overlapping by 2 minutes, transcribed in parallel, and stitched back together; speaker labels are matched across boundaries using the overlap. If someone is silent through an entire overlap window they can come back as a new "Speaker N" — give both chips the same name and exports read correctly.
-- Trim/Delete retime the existing transcript. Replace/Resume add new speech and require re-transcription.
+- Keep Selection / Remove Selection retime the existing transcript. Replace/Resume add new speech and require re-transcription.
 
 ## Verify changes
 
-With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio bytes, never your recordings, microphone, Keychain, or transcription account. Tests cover capture/recovery, provider and credential isolation, request parameters, HTTP errors, speaker/word parsing, old transcript compatibility, transcript archives, settings changes during jobs, and cancellation/restart races. Network responses are mocked; a successful live transcription with your own key is still a manual smoke check.
+With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio, never your recordings, microphone, Keychain, or transcription account. Tests cover capture/recovery, provider and credential isolation, request parameters, HTTP errors, speaker/word parsing, old transcript compatibility, transcript archives, settings changes during jobs, cancellation/restart races, trim boundaries, real audio keep/remove/undo/save operations, transcript retiming, and Markdown formatting. Network responses are mocked; a successful live transcription with your own key is still a manual smoke check.
 
 Before relying on a long recording, run these hardware smoke checks on your Mac:
 
