@@ -15,7 +15,7 @@ struct RecordingSessionView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text(TranscriptFormatter.timestamp(recorder.elapsed)).font(.title2.monospacedDigit())
+                Text(TranscriptFormatter.recordingClock(recorder.elapsed)).font(.title2.monospacedDigit())
             }
             .padding(20)
             Divider()

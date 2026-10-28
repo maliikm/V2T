@@ -1,5 +1,4 @@
 import Foundation
-import Speech
 
 /// User preferences. Provider API keys live in Keychain; everything else
 /// in UserDefaults.
@@ -17,9 +16,6 @@ final class AppSettings: ObservableObject {
     }
     @Published var liveTranscriptionEnabled: Bool {
         didSet { defaults.set(liveTranscriptionEnabled, forKey: "liveTranscriptionEnabled") }
-    }
-    @Published var liveTranscriptionLocale: String {
-        didSet { defaults.set(liveTranscriptionLocale, forKey: "liveTranscriptionLocale") }
     }
     @Published var autoTitle: Bool {
         didSet { defaults.set(autoTitle, forKey: "autoTitle") }
@@ -50,11 +46,6 @@ final class AppSettings: ObservableObject {
         provider = TranscriptionProvider(rawValue: defaults.string(forKey: "transcriptionProvider") ?? "") ?? .fal
         deepgramLanguageCode = defaults.string(forKey: "deepgramLanguageCode") ?? "en"
         liveTranscriptionEnabled = defaults.object(forKey: "liveTranscriptionEnabled") as? Bool ?? true
-        let preferredLocale = defaults.string(forKey: "liveTranscriptionLocale") ?? Locale.current.identifier
-        let normalized = preferredLocale.replacingOccurrences(of: "_", with: "-").components(separatedBy: "@")[0].lowercased()
-        liveTranscriptionLocale = SFSpeechRecognizer.supportedLocales().map(\.identifier).first {
-            $0.replacingOccurrences(of: "_", with: "-").lowercased() == normalized
-        } ?? preferredLocale
         autoTitle = defaults.object(forKey: "autoTitle") as? Bool ?? true
         tagAudioEvents = defaults.bool(forKey: "tagAudioEvents")
         languageCode = defaults.string(forKey: "languageCode") ?? ""

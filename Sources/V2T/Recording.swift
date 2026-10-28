@@ -23,6 +23,7 @@ struct Recording: Identifiable, Codable, Equatable {
     var automaticTitleEligible: Bool?
     var titleSource: String?
     var endedAt: Date?
+    var captureWarning: String?
 
     init(
         id: UUID = UUID(),
@@ -36,7 +37,8 @@ struct Recording: Identifiable, Codable, Equatable {
         speakerNames: [String: String] = [:],
         numSpeakersHint: Int? = nil,
         automaticTitleEligible: Bool? = nil,
-        endedAt: Date? = nil
+        endedAt: Date? = nil,
+        captureWarning: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -50,6 +52,7 @@ struct Recording: Identifiable, Codable, Equatable {
         self.numSpeakersHint = numSpeakersHint
         self.automaticTitleEligible = automaticTitleEligible
         self.endedAt = endedAt
+        self.captureWarning = captureWarning
     }
 
     /// Always show the calendar date, even for today's recordings.

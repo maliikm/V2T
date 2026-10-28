@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// In-app voice recording (the red button), capturing AAC m4a like Voice
-/// Memos, with an optional on-device transcript preview and pause/resume.
+/// Memos, with an optional Deepgram live transcript and pause/resume.
 @MainActor
 final class RecorderController: NSObject, ObservableObject {
     let liveTranscript = LiveTranscriber()
@@ -78,9 +78,10 @@ final class RecorderController: NSObject, ObservableObject {
             livePreview = ""
             let previewEnabled = appSettings?.liveTranscriptionEnabled ?? false
             liveTranscript.start(enabled: previewEnabled,
-                                 locale: appSettings?.liveTranscriptionLocale ?? Locale.current.identifier,
+                                 apiKey: appSettings?.deepgramAPIKey ?? "",
+                                 language: appSettings?.deepgramLanguageCode ?? "en",
                                  includesCall: false) { [weak self] in self?.elapsed ?? 0 }
-            if previewEnabled {
+            if liveTranscript.isRunning {
                 let input = MicrophonePreviewInput()
                 do { try input.start(sink: liveTranscript.micSink); previewInput = input }
                 catch { lastError = "Live preview input is unavailable. Audio is still recording." }
@@ -117,11 +118,10 @@ final class RecorderController: NSObject, ObservableObject {
         stopTimer()
         previewInput?.stop()
         previewInput = nil
-        livePreview = liveTranscript.stop()
         recorder.stop() // finalization continues in the delegate callback
     }
 
-    private func finishedWriting(successfully: Bool) {
+    private func finishedWriting(successfully: Bool) async {
         defer { isSaving = false }
         // The recording can also end without stop() being called (encoder or
         // disk error), so reset ALL state here unconditionally.
@@ -133,7 +133,7 @@ final class RecorderController: NSObject, ObservableObject {
         let callback = onFinished
         previewInput?.stop()
         previewInput = nil
-        if livePreview.isEmpty { livePreview = liveTranscript.stop() }
+        livePreview = await liveTranscript.finish()
         recorder = nil
         tempURL = nil
         onFinished = nil
@@ -188,7 +188,7 @@ final class RecorderController: NSObject, ObservableObject {
 extension RecorderController: AVAudioRecorderDelegate {
     nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         Task { @MainActor in
-            self.finishedWriting(successfully: flag)
+            await self.finishedWriting(successfully: flag)
         }
     }
 }

@@ -10,7 +10,7 @@ BUILD_ARGS=("$@")
 if [[ -n "${SDKROOT:-}" ]]; then BUILD_ARGS+=(--sdk "$SDKROOT"); fi
 swift build -c release "${BUILD_ARGS[@]}"
 
-APP=V2T.app
+APP="${V2T_APP_OUTPUT:-V2T.app}"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -41,7 +41,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleShortVersionString</key>
     <string>1.1</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -50,8 +50,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>V2T records voice memos with your microphone.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>V2T records the audio of apps you choose (for example meeting apps) so it can transcribe them.</string>
-    <key>NSSpeechRecognitionUsageDescription</key>
-    <string>V2T uses on-device speech recognition to show a live transcript while you record.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>V2T reads events from calendars you select to suggest recording titles. V2T never creates, changes, or deletes calendar events.</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
 </dict>

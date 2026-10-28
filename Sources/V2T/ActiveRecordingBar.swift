@@ -21,7 +21,7 @@ struct ActiveRecordingBar: View {
                         .foregroundStyle(.red)
                     Text(isPaused ? "Recording paused" : "Recording")
                         .fontWeight(.semibold)
-                    Text(TranscriptFormatter.timestamp(elapsed)).monospacedDigit()
+                    Text(TranscriptFormatter.recordingClock(elapsed)).monospacedDigit()
                 }
                 Spacer()
                 Button("Show Recording", action: showRecording)

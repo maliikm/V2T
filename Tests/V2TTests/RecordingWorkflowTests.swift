@@ -136,28 +136,6 @@ import Testing
 }
 
 @MainActor
-@Suite struct GoogleAuthorizationTests {
-    @Test func testPKCEUsesRFC7636Challenge() {
-        expectEqual(GoogleLoopbackAuthorization.challenge(for: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
-    }
-    @Test func testCallbackRejectsWrongMissingOrDuplicateState() {
-        for path in ["/oauth/callback?code=a", "/oauth/callback?state=wrong&code=a", "/oauth/callback?state=s&state=s&code=a", "/other?state=s&code=a", "https://other.test/oauth/callback?state=s&code=a"] {
-            expectNil(GoogleLoopbackAuthorization.parseCallback(path: path, expectedState: "s"))
-        }
-    }
-    @Test func testCallbackAcceptsCodeAndHandlesDenial() throws {
-        let accepted = try require(GoogleLoopbackAuthorization.parseCallback(path: "/oauth/callback?state=s&code=abc%2B123", expectedState: "s"))
-        expectEqual(try accepted.get(), "abc+123")
-        let denied = try require(GoogleLoopbackAuthorization.parseCallback(path: "/oauth/callback?state=s&error=access_denied", expectedState: "s"))
-        expectThrows(try denied.get())
-        expectNil(GoogleLoopbackAuthorization.parseCallback(path: "/oauth/callback?state=s&code=a&code=b", expectedState: "s"))
-    }
-    @Test func testFormEscapesTokenDelimiters() {
-        expectEqual(String(data: OAuthForm.encode(["token": "a+b&c=d e"]), encoding: .utf8), "token=a%2Bb%26c%3Dd%20e")
-    }
-}
-
-@MainActor
 @Suite struct LibraryWorkflowTests {
     @Test func testSpeakerChangesPersistAndUndo() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

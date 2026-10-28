@@ -54,14 +54,14 @@ final class RecordingTitleService: ObservableObject {
         return "Local AI titles require macOS 26 and Apple Intelligence. Clear calendar matches can still supply titles."
     }
 
-    func configure(store: LibraryStore, settings: AppSettings, calendar: GoogleCalendarConnection) {
+    func configure(store: LibraryStore, settings: AppSettings, calendar: CalendarConnection) {
         store.onTitleContextChanged = { [weak self, weak store, weak settings, weak calendar] id in
             guard let self, let store, let settings, let calendar else { return }
             self.updateTitle(for: id, store: store, settings: settings, calendar: calendar)
         }
     }
 
-    private func updateTitle(for id: UUID, store: LibraryStore, settings: AppSettings, calendar: GoogleCalendarConnection) {
+    private func updateTitle(for id: UUID, store: LibraryStore, settings: AppSettings, calendar: CalendarConnection) {
         tasks[id]?.cancel()
         guard settings.autoTitle, let recording = store.recording(with: id), recording.automaticTitleEligible == true else { return }
         let generation = UUID()
@@ -80,13 +80,13 @@ final class RecordingTitleService: ObservableObject {
                 catch {
                     guard !Task.isCancelled else { return }
                     calendarFailed = true
-                    self.status = "Calendar matching failed. Check Google Calendar in Settings; transcript-only titles can still be generated."
+                    self.status = "Calendar matching failed. Check Calendars in Settings; transcript-only titles can still be generated."
                 }
             }
             guard !Task.isCancelled else { return }
             let ranked = RecordingTitleMatcher.ranked(meetings, start: recording.createdAt, end: end, transcript: transcript)
             var title = RecordingTitleMatcher.confidentMatch(ranked)?.title
-            var source = "Google Calendar"
+            var source = "Calendar"
             #if canImport(FoundationModels)
             if #available(macOS 26, *), SystemLanguageModel.default.availability == .available, !transcript.isEmpty {
                 do {
@@ -110,7 +110,7 @@ final class RecordingTitleService: ObservableObject {
                     """)
                     if let generated = RecordingTitleMatcher.cleanTitle(response.content) {
                         title = generated
-                        source = meetings.isEmpty ? "Local AI" : "Local AI + Google Calendar"
+                        source = meetings.isEmpty ? "Local AI" : "Local AI + Calendar"
                     }
                 } catch {
                     self.status = "Local AI couldn't produce a title this time; using a clear calendar match when available."
