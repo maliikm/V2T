@@ -40,9 +40,6 @@ struct ActiveRecordingBar: View {
                     }
                 }
             }
-            if let error = capture.error {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
         }
         .padding(12)
         .background(.bar)

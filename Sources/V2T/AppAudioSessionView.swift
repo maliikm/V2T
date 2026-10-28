@@ -42,9 +42,6 @@ struct AppAudioSessionView: View {
                     .controlSize(.large)
                     Text("Mic controls this recording only. Use headphones or turn it on only when speaking to avoid speaker bleed.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if let error = appAudio.lastError {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                    }
                 }
                 .padding(16)
             }

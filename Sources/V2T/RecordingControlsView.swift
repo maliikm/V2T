@@ -23,9 +23,6 @@ struct RecordingControlsView: View {
                 MicrophoneCaptureButton().environmentObject(capture.appAudio)
             }
             RecordingTransportView()
-            if let error = capture.error {
-                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-            }
         }.padding(14).background(.bar)
     }
 }

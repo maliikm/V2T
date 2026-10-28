@@ -1,6 +1,25 @@
 import AVFoundation
 import Foundation
 
+struct CaptureNotice: Equatable {
+    enum Severity { case information, error }
+    let message: String
+    let severity: Severity
+}
+
+/// Silence is a signal observation, never proof of denied permission or a
+/// reason to destroy a healthy tap. Read/write state crosses audio/UI queues.
+final class CaptureSignalMonitor {
+    private let lock = NSLock()
+    private var lastSignal: TimeInterval?
+    func ingest(peak: Float, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if peak > 0.00001 { lock.withLock { lastSignal = now } }
+    }
+    func isQuiet(now: TimeInterval, activeSince: TimeInterval) -> Bool {
+        lock.withLock { now - max(lastSignal ?? activeSince, activeSince) >= 10 }
+    }
+}
+
 /// Successful disk writes, not the running UI timer, determine capture health.
 final class CaptureProgress {
     struct Snapshot {

@@ -28,8 +28,8 @@ enum CaptureTarget {
 ///
 /// The tap is disposable — torn down and rebuilt (keeping the same output
 /// file) when the default output device changes, when the target app's
-/// helper processes churn, or when the silence watchdog suspects the known
-/// zero-buffer tap bug.
+/// stream stops delivering buffers. Helper changes update the existing tap;
+/// silence alone never restarts capture.
 @available(macOS 14.4, *)
 @MainActor
 final class TapRecordingSession {
@@ -38,22 +38,19 @@ final class TapRecordingSession {
     let target: CaptureTarget
     let directory: URL
 
-    /// Fired when buffers have been all-zero since recording started —
-    /// almost certainly a System Audio Recording permission denial.
-    var onSuspectedPermissionDenial: (() -> Void)?
-    var onCaptureWarning: ((String) -> Void)?
+    var onCaptureNotice: ((CaptureNotice?) -> Void)?
+    private var currentNotice: CaptureNotice?
     private var healthTimer: Timer?
     private var healthActiveSince = ProcessInfo.processInfo.systemUptime
     private var lastHealthRecovery: TimeInterval = 0
     private var stalledRecoveries = 0
-    private var reportedMicStall = false
     var callAudioSink: LiveAudioSink?
     var micAudioSink: LiveAudioSink?
 
     private var tap = ProcessTap()
     private var tapRecorder: ProcessTapRecorder?
     private var micRecorder: MicTrackRecorder?
-    private let watchdog = SilenceWatchdog()
+    private let signal = CaptureSignalMonitor()
     private var currentObjectIDs: [AudioObjectID] = []
     private var outputDeviceListener: AudioPropertyListener?
     private var rateListener: AudioPropertyListener?
@@ -105,19 +102,12 @@ final class TapRecordingSession {
         )
         recorder.onBuffer = { [weak self] peak in
             guard let self else { return }
-            self.watchdog.ingest(isSilent: peak == 0)
+            self.signal.ingest(peak: peak)
         }
         tapRecorder = recorder
         recorder.onAudio = { [callAudioSink] buffer in callAudioSink?.append(buffer) }
         try tap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
         installRateListener()
-
-        watchdog.onSuspectedPermissionDenial = { [weak self] in
-            self?.onSuspectedPermissionDenial?()
-        }
-        watchdog.onProlongedSilence = { [weak self] in
-            self?.rebuildTap(reason: "prolonged silence")
-        }
 
         // Default output device switches change where the target app renders;
         // the safest recovery is a full tap rebuild.
@@ -151,7 +141,6 @@ final class TapRecordingSession {
             mic.isPaused = isPaused
             try mic.start(fileURL: micFileURL, captureFormat: .m4a)
             micRecorder = mic
-            reportedMicStall = false
         }
     }
 
@@ -169,6 +158,7 @@ final class TapRecordingSession {
             activeDuration += Date().timeIntervalSince(segmentStartedAt)
         }
         segmentStartedAt = nil
+        setNotice(nil)
     }
 
     func resume() {
@@ -179,8 +169,6 @@ final class TapRecordingSession {
         healthActiveSince = ProcessInfo.processInfo.systemUptime
         tapRecorder?.isPaused = false
         micRecorder?.isPaused = false
-        // Don't let silence accumulated across the pause trigger a rebuild.
-        watchdog.resetAfterRebuild()
     }
 
     private var tapMode: ProcessTap.Mode {
@@ -198,8 +186,14 @@ final class TapRecordingSession {
         let updatedIDs = processes.first { $0.id == targetProcess.id }?.objectIDs ?? []
         if updatedIDs.isEmpty { return } // app briefly has no audio processes
         guard Set(updatedIDs) != Set(currentObjectIDs) else { return }
-        currentObjectIDs = updatedIDs
-        rebuildTap(reason: "target app process set changed")
+        do {
+            try tap.updateProcesses(updatedIDs)
+            currentObjectIDs = updatedIDs
+            LiveDiagnostics.write("Capture: updated app process set count=\(updatedIDs.count)")
+        } catch {
+            currentObjectIDs = updatedIDs
+            rebuildTap(reason: "process update failed")
+        }
     }
 
     func stop() {
@@ -218,6 +212,7 @@ final class TapRecordingSession {
         tap.invalidate()
         micRecorder?.stop()
         tapRecorder?.finish()
+        setNotice(nil)
     }
 
     /// A sample-rate change on the (new) aggregate device mid-recording
@@ -238,7 +233,9 @@ final class TapRecordingSession {
         let now = ProcessInfo.processInfo.systemUptime
         let app = recorder.progress.snapshot
         if app.writeError != nil || app.isStalled(now: now, activeSince: healthActiveSince) {
-            onCaptureWarning?("Call audio has stopped reaching the recording file. Trying to restore capture; check your audio source.")
+            setNotice(.init(message: stalledRecoveries < 3
+                            ? "Call audio has stopped reaching the file. Attempting to restore capture."
+                            : "Call audio capture is unavailable. Stop recording and check the audio source; the captured portion will be kept.", severity: .error))
             if stalledRecoveries < 3, now - lastHealthRecovery > 5 {
                 lastHealthRecovery = now
                 stalledRecoveries += 1
@@ -247,15 +244,22 @@ final class TapRecordingSession {
             }
         } else {
             stalledRecoveries = 0
-        }
-        if let mic = micRecorder {
-            let state = mic.progress.snapshot
-            if !reportedMicStall, state.writeError != nil || state.isStalled(now: now, activeSince: max(healthActiveSince, micStartedAt)) {
-                reportedMicStall = true
-                onCaptureWarning?("Microphone audio has stopped reaching the recording file. Call capture is checked separately. Check your microphone before continuing.")
-                LiveDiagnostics.write("Capture: microphone stalled")
+            if let mic = micRecorder,
+               mic.progress.snapshot.writeError != nil || mic.progress.snapshot.isStalled(now: now, activeSince: max(healthActiveSince, micStartedAt)) {
+                setNotice(.init(message: "Microphone audio has stopped reaching the file. Check your microphone; call audio is still arriving.", severity: .error))
+            } else if signal.isQuiet(now: now, activeSince: healthActiveSince) {
+                setNotice(.init(message: "No sound detected from \(target.displayName). If audio is playing, check the selected source and V2T’s System Audio Recording permission.", severity: .information))
+            } else {
+                setNotice(nil)
             }
         }
+    }
+    private func setNotice(_ notice: CaptureNotice?) {
+        guard currentNotice != notice else { return }
+        currentNotice = notice
+        onCaptureNotice?(notice)
+        // Fixed, metadata-only events; do not log user-facing app names.
+        LiveDiagnostics.write(notice == nil ? "Capture: status cleared" : "Capture: status changed severity=\(notice!.severity)")
     }
     private var micStartedAt = ProcessInfo.processInfo.systemUptime
 
@@ -267,6 +271,7 @@ final class TapRecordingSession {
             return
         }
         Self.logger.log("Rebuilding tap (\(reason, privacy: .public))")
+        LiveDiagnostics.write("Capture: rebuilding tap reason=\(reason)")
 
         tap.invalidate()
         let newTap = ProcessTap()
@@ -278,10 +283,10 @@ final class TapRecordingSession {
             try newTap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
             tap = newTap
             installRateListener()
-            watchdog.resetAfterRebuild()
+            healthActiveSince = ProcessInfo.processInfo.systemUptime
         } catch {
             newTap.invalidate()
-            onCaptureWarning?("Call audio capture could not restart. Stop and check your audio source; the captured portion will be kept.")
+            setNotice(.init(message: "Call audio capture could not restart. Stop and check your audio source; the captured portion will be kept.", severity: .error))
             LiveDiagnostics.write("Capture: tap rebuild failed code=\((error as NSError).code)")
             Self.logger.error("Tap rebuild failed: \(String(describing: error), privacy: .public)")
         }

@@ -4,8 +4,7 @@ import CoreAudio
 import Foundation
 import os.log
 
-// The tap-side and mic-side file writers plus the silence watchdog,
-// ported from DesktopAudio.
+// The tap-side and mic-side file writers, ported from DesktopAudio.
 
 /// On-disk formats for captured audio.
 enum CaptureFormat: String {
@@ -354,78 +353,5 @@ final class MicTrackRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         writer?.finish()
-    }
-}
-
-/// Watches the tap's buffer stream for pathological silence.
-///
-/// - All-zero from the very first buffer: almost certainly the System Audio
-///   Recording permission was denied (denial manifests as silent buffers,
-///   never as an error) → surface a permission hint.
-/// - Prolonged all-zero after audio was flowing: either the app went quiet
-///   (fine) or the known Core Audio tap bug where a live tap starts
-///   delivering zeros → request a tap rebuild (harmless if merely quiet).
-///
-/// `ingest` is called on the recorder's writer queue; callbacks are
-/// dispatched to the main queue.
-final class SilenceWatchdog {
-    var onSuspectedPermissionDenial: (() -> Void)?
-    var onProlongedSilence: (() -> Void)?
-
-    private let permissionHintSeconds: TimeInterval
-    private let rebuildSeconds: TimeInterval
-    private let rebuildCooldownSeconds: TimeInterval
-
-    private var sawSignal = false
-    private var silenceStartedAt: Date?
-    private var startedAt = Date()
-    private var permissionHintFired = false
-    private var lastRebuildRequestAt: Date?
-
-    init(
-        permissionHintSeconds: TimeInterval = 3,
-        rebuildSeconds: TimeInterval = 10,
-        rebuildCooldownSeconds: TimeInterval = 30
-    ) {
-        self.permissionHintSeconds = permissionHintSeconds
-        self.rebuildSeconds = rebuildSeconds
-        self.rebuildCooldownSeconds = rebuildCooldownSeconds
-    }
-
-    /// Call after a tap rebuild or resume so accumulated silence isn't
-    /// immediately re-flagged.
-    func resetAfterRebuild() {
-        silenceStartedAt = nil
-        lastRebuildRequestAt = Date()
-    }
-
-    func ingest(isSilent: Bool) {
-        let now = Date()
-
-        if !isSilent {
-            sawSignal = true
-            silenceStartedAt = nil
-            return
-        }
-
-        if silenceStartedAt == nil { silenceStartedAt = now }
-
-        if !sawSignal {
-            if !permissionHintFired, now.timeIntervalSince(startedAt) >= permissionHintSeconds {
-                permissionHintFired = true
-                let callback = onSuspectedPermissionDenial
-                DispatchQueue.main.async { callback?() }
-            }
-            return
-        }
-
-        guard let silenceStart = silenceStartedAt,
-              now.timeIntervalSince(silenceStart) >= rebuildSeconds else { return }
-        if let last = lastRebuildRequestAt, now.timeIntervalSince(last) < rebuildCooldownSeconds { return }
-
-        lastRebuildRequestAt = now
-        silenceStartedAt = nil
-        let callback = onProlongedSilence
-        DispatchQueue.main.async { callback?() }
     }
 }
