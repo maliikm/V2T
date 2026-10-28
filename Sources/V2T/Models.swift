@@ -406,6 +406,12 @@ extension Transcript {
 // MARK: - Formatting
 
 enum TranscriptFormatter {
+    /// Stable recording counter: hours, minutes, seconds, with no fractions.
+    static func recordingClock(_ seconds: Double) -> String {
+        let total = seconds.isFinite ? Int(min(max(0, seconds), 359_999_999)) : 0
+        return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+    }
+
     /// "MM:SS.cc" like Voice Memos' big playback counter.
     static func clock(_ seconds: Double) -> String {
         let clamped = max(0, seconds)

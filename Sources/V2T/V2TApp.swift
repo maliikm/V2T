@@ -10,7 +10,7 @@ struct V2TApp: App {
     @StateObject private var transcriber: TranscriptionManager
     @StateObject private var appAudio: AppAudioRecorder
     @StateObject private var capture: RecordingCoordinator
-    @StateObject private var calendar = GoogleCalendarConnection()
+    @StateObject private var calendar = CalendarConnection()
     @StateObject private var titleService = RecordingTitleService()
 
     init() {

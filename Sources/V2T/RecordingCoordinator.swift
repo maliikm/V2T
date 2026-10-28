@@ -125,7 +125,7 @@ final class RecordingCoordinator: ObservableObject {
     }
 
     private func didSave(_ recording: Recording) {
-        if settings.autoTranscribe && settings.hasAPIKey {
+        if settings.autoTranscribe && settings.hasAPIKey && recording.captureWarning == nil {
             transcriber.transcribe(recording, store: store, settings: settings)
         }
     }

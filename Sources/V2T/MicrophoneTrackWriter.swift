@@ -5,6 +5,7 @@ import Foundation
 /// the raw mic track either; silence keeps later speech at its original time.
 final class MicrophoneTrackWriter {
     private let lock = NSLock()
+    let progress: CaptureProgress
     private var file: AVAudioFile?
     private var muted = false
     private var paused = false
@@ -20,7 +21,7 @@ final class MicrophoneTrackWriter {
     }
     var firstBufferHostTime: UInt64? { lock.withLock { firstHostTime } }
 
-    init(file: AVAudioFile) { self.file = file }
+    init(file: AVAudioFile, progress: CaptureProgress = CaptureProgress()) { self.file = file; self.progress = progress }
 
     /// Returns true only for audible mic buffers, for the live transcript.
     @discardableResult
@@ -40,6 +41,7 @@ final class MicrophoneTrackWriter {
             } else {
                 try file.write(from: buffer)
             }
+            progress.wrote(frames: buffer.frameLength, sampleRate: buffer.format.sampleRate)
             return !muted
         }
     }

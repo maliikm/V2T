@@ -22,7 +22,7 @@ struct AppAudioSessionView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(TranscriptFormatter.timestamp(appAudio.elapsed)).font(.title2.monospacedDigit())
+                    Text(TranscriptFormatter.recordingClock(appAudio.elapsed)).font(.title2.monospacedDigit())
                 }
                 .padding(20)
                 Divider()
@@ -40,7 +40,7 @@ struct AppAudioSessionView: View {
                             .buttonStyle(.borderedProminent).tint(.red)
                     }
                     .controlSize(.large)
-                    Text("Mic controls this recording only. Turn it on when you speak; echo reduction helps reduce speaker bleed.")
+                    Text("Mic controls this recording only. Use headphones or turn it on only when speaking to avoid speaker bleed.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let error = appAudio.lastError {
                         Text(error).font(.caption).foregroundStyle(.red)

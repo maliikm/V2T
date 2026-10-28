@@ -113,6 +113,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         session.onSuspectedPermissionDenial = { [weak self] in
             self?.lastError = Self.permissionMessage
         }
+        session.onCaptureWarning = { [weak self] message in self?.lastError = message }
         let wantsMic = withMic
         do {
             try session.start()
@@ -135,7 +136,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         isRecording = true
         startTimer()
         liveTranscript.start(enabled: settings.liveTranscriptionEnabled,
-                             locale: settings.liveTranscriptionLocale, includesCall: true) { [weak self] in
+                             apiKey: settings.deepgramAPIKey, language: settings.deepgramLanguageCode, includesCall: true) { [weak self] in
             self?.elapsed ?? 0
         }
 
@@ -204,7 +205,6 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         isChangingMicrophone = false
         stopTimer()
         session.stop()
-        let livePreview = liveTranscript.stop()
         self.session = nil
 
         let duration = session.activeDuration
@@ -220,6 +220,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         onFinished = nil
 
         guard duration > 0.5 else {
+            liveTranscript.stop()
             try? FileManager.default.removeItem(at: sessionDirectory)
             lastError = "Recording was too short to keep."
             return
@@ -227,43 +228,49 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
         isSaving = true
         Task {
-            // Backstop: if the tap wrote with a mislabeled sample rate (the
-            // decoded duration disagrees with the wall clock), relabel it
-            // before anything else consumes it.
-            let repairedAppURL = await Task.detached(priority: .userInitiated) {
-                CaptureTimingRepair.repairIfMistimed(url: appURL, actualDuration: duration)
-            }.value
-            if repairedAppURL != appURL {
-                self.lastError = "The capture's timing was off and has been corrected automatically."
-            }
-
-            var finalURL = repairedAppURL
+            async let finalPreview = liveTranscript.finish()
+            // Wall-clock time is not evidence of captured samples. Never
+            // stretch a short/stalled file to impersonate a complete recording.
+            var finalURL = appURL
+            var mixFailed = false
             if let micURL, FileManager.default.fileExists(atPath: micURL.path) {
                 do {
                     let mixURL = sessionDirectory.appendingPathComponent("mix.m4a")
                     finalURL = try await Task.detached(priority: .userInitiated) {
                         try MixdownExporter.export(
-                            appURL: repairedAppURL, micURL: micURL,
+                            appURL: appURL, micURL: micURL,
                             micOffsetSeconds: micOffset, outputURL: mixURL
                         )
                     }.value
                 } catch {
+                    mixFailed = true
                     self.lastError = "Mic mixdown failed (\(error.localizedDescription)) — saved the app audio only."
                 }
             }
 
-            var tracks = ["track-app.m4a": repairedAppURL]
+            var tracks = ["track-app.m4a": appURL]
             if let micURL { tracks["track-mic.m4a"] = micURL }
-            if repairedAppURL != appURL { tracks["track-app-raw.m4a"] = appURL }
+            let savedURL = finalURL
+            let (actualDuration, callDuration, microphoneDuration) = await Task.detached {
+                (CaptureValidation.duration(at: savedURL), CaptureValidation.duration(at: appURL), micURL.map { CaptureValidation.duration(at: $0) })
+            }.value
+            let captureWarning = CaptureValidation.sessionWarning(
+                expected: duration, callDuration: callDuration,
+                microphoneExpected: micURL == nil ? nil : max(0, duration - max(0, micOffset)),
+                microphoneDuration: microphoneDuration, mixFailed: mixFailed
+            )
+            if let captureWarning { self.lastError = captureWarning }
+            LiveDiagnostics.write("Capture: stopped expected=\(Int(duration))s saved=\(Int(actualDuration))s")
             let recording = self.store?.addRecordedFile(
-                at: finalURL, duration: duration, startedAt: startDate, title: title,
-                folderID: destinationFolder, rawTracks: tracks, endedAt: endedAt
+                at: finalURL, duration: actualDuration, startedAt: startDate, title: title,
+                folderID: destinationFolder, rawTracks: tracks, endedAt: endedAt, captureWarning: captureWarning
             )
             // LibraryStore owns cleanup, after all audio and metadata writes
             // succeed. Failures leave the complete capture available for retry.
             if recording == nil {
                 self.lastError = self.store?.lastError ?? "Captured files are kept in Recovery."
             }
+            let livePreview = await finalPreview
             if let recording { self.store?.saveLivePreview(livePreview, for: recording.id) }
             self.isSaving = false
             if let recording { finished?(recording) }

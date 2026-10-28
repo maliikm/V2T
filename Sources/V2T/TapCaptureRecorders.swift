@@ -47,6 +47,7 @@ final class ProcessTapRecorder {
     private static let logger = Logger(subsystem: kV2TSubsystem, category: "ProcessTapRecorder")
 
     let fileURL: URL
+    let progress = CaptureProgress()
     private var file: AVAudioFile?
     private let writerQueue = DispatchQueue(label: "\(kV2TSubsystem).tap-writer", qos: .userInitiated)
     private var converter: AVAudioConverter?
@@ -57,7 +58,12 @@ final class ProcessTapRecorder {
 
     /// While true, incoming buffers are dropped (the tap keeps running so
     /// resume is instant and stays aligned with the mic track).
-    var isPaused = false
+    private let stateLock = NSLock()
+    private var paused = false
+    var isPaused: Bool {
+        get { stateLock.withLock { paused } }
+        set { stateLock.withLock { paused = newValue } }
+    }
 
     /// Host time of the first non-empty buffer (for cross-track alignment).
     private(set) var firstBufferHostTime: UInt64?
@@ -124,7 +130,6 @@ final class ProcessTapRecorder {
     private func write(_ buffer: AVAudioPCMBuffer) {
         guard let file else { return }
         onBuffer?(Self.peak(of: buffer))
-        onAudio?(buffer)
         do {
             // Full AVAudioFormat equality also compares channel layouts, which
             // differ (nil vs. default) between the tap ASBD and the file's
@@ -132,10 +137,13 @@ final class ProcessTapRecorder {
             if Self.formatsCompatible(buffer.format, file.processingFormat) {
                 try file.write(from: buffer)
                 framesWritten += Int64(buffer.frameLength)
+                progress.wrote(frames: buffer.frameLength, sampleRate: file.processingFormat.sampleRate)
             } else {
                 try writeConverted(buffer)
             }
+            onAudio?(buffer)
         } catch {
+            progress.failed(error)
             Self.logger.error("File write failed: \(String(describing: error), privacy: .public)")
         }
     }
@@ -154,12 +162,12 @@ final class ProcessTapRecorder {
         if converter?.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: file.processingFormat)
         }
-        guard let converter else { return }
+        guard let converter else { throw CocoaError(.fileWriteUnknown) }
 
         let ratio = file.processingFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
         guard let output = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: capacity) else {
-            return
+            throw CocoaError(.fileWriteUnknown)
         }
 
         var fed = false
@@ -174,9 +182,11 @@ final class ProcessTapRecorder {
             return buffer
         }
         if let conversionError { throw conversionError }
-        if status != .error, output.frameLength > 0 {
+        guard status != .error else { throw CocoaError(.fileWriteUnknown) }
+        if output.frameLength > 0 {
             try file.write(from: output)
             framesWritten += Int64(output.frameLength)
+            progress.wrote(frames: output.frameLength, sampleRate: file.processingFormat.sampleRate)
         }
     }
 
@@ -265,6 +275,7 @@ final class MicTrackRecorder {
     }
 
     private let engine = AVAudioEngine()
+    let progress = CaptureProgress()
     private var writer: MicrophoneTrackWriter?
     var onAudio: ((AVAudioPCMBuffer) -> Void)?
 
@@ -296,12 +307,10 @@ final class MicTrackRecorder {
         guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
             throw MicError.invalidInputFormat
         }
-        // Voice processing reduces speaker bleed in the microphone input.
-        // Do not connect the mic to the mixer: that would monitor it audibly.
-        try input.setVoiceProcessingEnabled(true)
-        input.voiceProcessingOtherAudioDuckingConfiguration = .init(
-            enableAdvancedDucking: false, duckingLevel: .min
-        )
+        // Keep input capture independent of output-device voice processing.
+        // Enabling the full-duplex VoiceProcessingIO unit can reconfigure the
+        // output device used by an already-running process tap. Use the regular
+        // input engine; headphones/mic gating avoid speaker bleed safely.
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw MicError.invalidInputFormat
@@ -316,7 +325,7 @@ final class MicTrackRecorder {
             commonFormat: format.commonFormat,
             interleaved: format.isInterleaved
         )
-        let writer = MicrophoneTrackWriter(file: file)
+        let writer = MicrophoneTrackWriter(file: file, progress: progress)
         writer.isPaused = isPaused
         writer.isMuted = isMuted
         self.writer = writer
@@ -326,6 +335,7 @@ final class MicTrackRecorder {
                 let audible = try writer.append(buffer, hostTime: when.isHostTimeValid ? when.hostTime : nil)
                 if audible { self?.onAudio?(buffer) }
             } catch {
+                writer.progress.failed(error)
                 Self.logger.error("Mic write failed: \(String(describing: error), privacy: .public)")
             }
         }
@@ -344,76 +354,6 @@ final class MicTrackRecorder {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         writer?.finish()
-    }
-}
-
-/// Backstop against mislabeled capture rates: the session knows the true
-/// wall-clock recording duration, so if the finished file's decoded duration
-/// disagrees with it, the audio was written with a wrong sample-rate label
-/// (whatever the underlying cause). Rewrite it with the rate relabeled so it
-/// plays in real time — pure PCM copy, no resampling, pitch restored exactly.
-enum CaptureTimingRepair {
-    private static let logger = Logger(subsystem: kV2TSubsystem, category: "CaptureTimingRepair")
-
-    /// Blocking; call off the main thread. Returns the corrected file URL,
-    /// or the original when timing is already right (±3%) or repair fails.
-    static func repairIfMistimed(url: URL, actualDuration: Double) -> URL {
-        guard actualDuration > 1 else { return url }
-        do {
-            let source = try AVAudioFile(forReading: url)
-            let declaredRate = source.processingFormat.sampleRate
-            guard declaredRate > 0, source.length > 0 else { return url }
-            let fileDuration = Double(source.length) / declaredRate
-            let ratio = fileDuration / actualDuration
-            guard ratio < 0.97 || ratio > 1.03 else { return url }
-
-            // The rate the frames were really captured at.
-            let idealRate = declaredRate * fileDuration / actualDuration
-            let standardRates: [Double] = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000]
-            var rate = idealRate
-            if let nearest = standardRates.min(by: { abs($0 - idealRate) < abs($1 - idealRate) }),
-               abs(nearest - idealRate) / idealRate <= 0.03 {
-                rate = nearest
-            }
-            Self.logger.warning("Mistimed capture: declared \(declaredRate, privacy: .public) Hz, plays \(fileDuration, privacy: .public)s for \(actualDuration, privacy: .public)s recorded — relabeling at \(rate, privacy: .public) Hz")
-
-            let channels = source.processingFormat.channelCount
-            guard let outFormat = AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels) else {
-                return url
-            }
-            let outURL = url.deletingLastPathComponent()
-                .appendingPathComponent("retimed-\(url.lastPathComponent)")
-            try? FileManager.default.removeItem(at: outURL)
-            let output = try AVAudioFile(
-                forWriting: outURL,
-                settings: CaptureFormat.m4a.fileSettings(sampleRate: rate, channelCount: UInt32(channels)),
-                commonFormat: outFormat.commonFormat,
-                interleaved: outFormat.isInterleaved
-            )
-
-            let capacity: AVAudioFrameCount = 1 << 16
-            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: capacity),
-                  let outBuffer = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: capacity) else {
-                return url
-            }
-            while true {
-                try source.read(into: inBuffer)
-                let frames = Int(inBuffer.frameLength)
-                if frames == 0 { break }
-                for channel in 0..<Int(channels) {
-                    if let src = inBuffer.floatChannelData?[channel],
-                       let dst = outBuffer.floatChannelData?[channel] {
-                        dst.update(from: src, count: frames)
-                    }
-                }
-                outBuffer.frameLength = inBuffer.frameLength
-                try output.write(from: outBuffer)
-            }
-            return outURL
-        } catch {
-            Self.logger.error("Timing repair failed: \(String(describing: error), privacy: .public)")
-            return url
-        }
     }
 }
 

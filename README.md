@@ -1,6 +1,6 @@
 # V2T
 
-A native macOS app for recording calls, reading transcripts, and keeping a searchable meeting library. Audio stays in your local library. Live previews and AI titles run on the Mac; final transcription uses your selected provider: **Deepgram Nova-3** or ElevenLabs Scribe v2 through fal.ai. Saved provider choices and separate Keychain credentials are preserved.
+A native macOS app for recording calls, reading transcripts, and keeping a searchable meeting library. Audio stays in your local library. Live transcripts stream directly to **Deepgram Nova-3**. AI titles run on the Mac; final transcription uses your selected provider: **Deepgram Nova-3** or ElevenLabs Scribe v2 through fal.ai. Saved provider choices and separate Keychain credentials are preserved.
 
 ## Recording and browsing
 
@@ -10,15 +10,15 @@ Click the source summary above Record to choose **Microphone**, **Application**,
 - Saved recordings open to their transcript. **Copy Transcript** copies speaker names, timestamps, and text; the More menu provides **Copy Markdown**, audio sharing, favorites, and playback options.
 - Library previews and recording headers always show the **actual date and start time**, including today's recordings. Automatic titles never remove this information.
 - Playback and audio editing are unavailable during capture so an old recording cannot leak into the call recording. Reading, copying, searching, and organizing remain available.
-- The recording view emphasizes the live transcript and essential controls. Audio-level meters and large precision timers have been removed. Waveforms remain available for playback, seeking, and audio editing.
+- The recording view emphasizes the live transcript and essential controls. Audio-level meters and large precision timers have been removed. Recording counters consistently show hours, minutes, and seconds (`HH:MM:SS`). Waveforms remain available for playback, seeking, and audio editing.
 
 ### Microphone and echo reduction
 
 Use **Mic on / Mic off** in the recording window or persistent bar, the mic button in the menu bar, or **⌘⌥M**. You can enable the mic even if the call started with it off. This controls V2T's recording only; it does not change the meeting app's mute button.
 
-The mic uses macOS voice processing for echo reduction. Keep it off while listening and turn it on when speaking. Muted sections are written as silence, including in the saved raw mic track, so your later speech stays aligned with the call. Pausing removes time from both tracks; enabling the mic after a pause accounts for the removed time.
+Use headphones or keep the mic off while listening and turn it on when speaking to avoid speaker bleed. Muted sections are written as silence, including in the saved raw mic track, so your later speech stays aligned with the call. Pausing removes time from both tracks; enabling the mic after a pause accounts for the removed time.
 
-Echo reduction depends on the input/output devices and room. Headphones can still help if speaker bleed remains. Once enabled, the input engine stays running while V2T mutes its saved output; the macOS microphone indicator may remain visible.
+Once enabled, the input engine stays running while V2T mutes its saved output; the macOS microphone indicator may remain visible.
 
 Global shortcuts:
 
@@ -30,9 +30,9 @@ Global shortcuts:
 
 ## Live and final transcripts
 
-Live previews use Apple's **on-device** speech recognition. Enable them and select a language in Settings. V2T requests Speech Recognition permission when you record. If the device or selected language does not support on-device recognition, V2T keeps recording audio and explains why the preview is unavailable. It does not silently send live audio to a cloud recognizer.
+Live transcripts use **Deepgram Nova-3 streaming** with your saved Deepgram API key. Enable them in Settings and use a supported Deepgram language code (`en` by default; `multi` or an empty value for multilingual recognition). Audio is sent directly over an authenticated secure WebSocket, normalized to 16 kHz mono PCM16. Model-improvement opt-out is always enabled. Streaming has its own Deepgram usage charges, separate from final transcription.
 
-Call previews distinguish **Call audio** from **My microphone**. They do not reliably identify individual participants. Recognition requests rotate during long recordings, so previews may contain incomplete wording around boundaries. They are a convenience while recording, not the final transcript.
+Call previews distinguish **Call audio** from **My microphone**, using separate streams. The microphone stream only runs while microphone recording is enabled. Pausing closes the streams; resuming creates fresh streams with recording-relative timestamps. Interim words update in place, finalized passages stay visible, and stopping allows a bounded three-second drain for the last words. Network interruptions use bounded retries; account/key errors show an actionable message. A five-second audio queue bounds memory; network gaps can leave gaps in the preview, while the locally recorded audio remains available for final transcription.
 
 When recording stops, the preview is saved as `live-preview.txt` beside the audio and remains readable/copyable while the final transcript is processing. With the selected provider’s key and automatic transcription enabled, Deepgram Nova-3 or fal’s Scribe v2 produces the final speaker-labeled transcript. Provider/model metadata and transcript history remain available. Deepgram receives a direct upload; fal’s long recordings are chunked with overlap and stitched together.
 
@@ -59,23 +59,18 @@ Deepgram speaker-count hints and audio-event tagging are not implemented; the fa
 
 Changing providers never bulk-transcribes or modifies your library. To compare an existing recording, switch providers and use **Re-transcribe**. Before replacement, V2T archives the previous transcript, recording metadata/speaker names, and a readable Markdown export under `Library/<recording-id>/Transcript History/`. **Previous Versions** opens that folder in Finder (manual comparison, not an in-app restore browser). Speaker names are reset on the new transcript because provider speaker numbers aren't stable identities. The current transcript remains unchanged if the request or archive write fails.
 
-## Google Calendar & local AI titles
+## Calendars & local AI titles
 
-V2T connects **directly to Google Calendar**, independently of the macOS Calendar app. It requests read-only access to events and the calendar list. Select which calendars can be used in V2T Settings.
+V2T reads calendars already synced with **Apple Calendar**, including Google and Outlook accounts. This works without a Google Cloud project, OAuth JSON, or a public/private calendar link.
 
-For a personal build, configure Google OAuth once:
+1. In Apple Calendar, choose **Calendar → Add Account → Google** and sign in. Enable calendar syncing and wait for your events to appear.
+2. In V2T Settings → Calendars, choose **Connect Apple Calendar…** and allow Calendar access.
+3. Select the calendars V2T may use for recording titles. Account names distinguish similarly named calendars.
 
-1. Create or choose a project in [Google Cloud Console](https://console.cloud.google.com/).
-2. Enable **Google Calendar API** and configure the OAuth consent screen. If the app is in testing, add your Google account as a test user.
-3. Create an OAuth client with application type **Desktop app**, and download its JSON file.
-4. In V2T Settings → Google Calendar, choose **Import Desktop OAuth Client JSON…**, then **Connect Google Calendar…**.
-5. Complete Google sign-in in your browser and select the calendars to use.
+macOS calls this permission **Full Access** because EventKit does not offer a separate read-only permission. V2T only reads selected calendar events; it never creates, changes, or deletes them. Disconnect stops calendar matching in V2T. Permission can also be revoked in System Settings → Privacy & Security → Calendars. Work administrators may restrict access or account syncing.
 
-The app uses a loopback callback, PKCE, and a random state value. Client configuration and access/refresh tokens stay in Keychain; do not commit the downloaded JSON to this repository. **Disconnect** removes stored tokens from the Mac. You can also revoke the app's access from your Google account. See [Google's desktop OAuth documentation](https://developers.google.com/identity/protocols/oauth2/native-app).
+EventKit supplies recurring events, exceptions, and time zones. All-day, cancelled, and declined events are excluded. Event titles remain on this Mac and are never sent to Deepgram or fal. Local AI on macOS 26 with Apple Intelligence uses meeting overlap and transcript content to suggest titles; a clear calendar match is the fallback when local AI is unavailable. Manual recording names are preserved.
 
-With **Automatically title new recordings** enabled, V2T checks events overlapping the actual recording period and uses transcript content to generate a concise title with Apple's on-device Foundation Models framework. A title can improve after the final transcript arrives. Calendar context stays out of cloud transcription requests. Renaming a recording yourself prevents subsequent automatic changes; imports and older library items are not automatically renamed.
-
-Local AI requires **macOS 26+, an Apple Intelligence-capable Mac, and an available Apple Intelligence model**. Settings reports availability. When the model is unavailable, an unambiguous calendar match can still supply a title; ambiguous matches keep the existing title. Calendar failures do not interrupt recording or transcription.
 
 ## Other library features
 
@@ -91,7 +86,7 @@ Local AI requires **macOS 26+, an Apple Intelligence-capable Mac, and an availab
 
 - macOS 14+; app/system audio capture requires macOS 14.4+ and System Audio Recording permission.
 - Xcode Command Line Tools. Build with a macOS 26+ SDK to include local AI title generation; older SDKs omit it.
-- A [Deepgram API key](https://console.deepgram.com/) or [fal.ai API key](https://fal.ai/dashboard/keys) for final transcription. Live previews, recording, browsing, and local AI do not require that key.
+- A [Deepgram API key](https://console.deepgram.com/) or [fal.ai API key](https://fal.ai/dashboard/keys) for final transcription. Deepgram live transcripts require a Deepgram key even if the final service is fal. Recording, browsing, and local AI do not require a key.
 
 ```sh
 git clone --branch main https://github.com/maliikm/V2T.git
@@ -99,7 +94,7 @@ cd V2T
 ./Scripts/make-app.sh
 ```
 
-The script builds `V2T.app`, generates its **V2T text icon** at native macOS sizes, adds permission descriptions, and signs it locally. Move the app to `/Applications` if desired. Building the bundle is recommended for microphone and speech permission prompts. Choose the final transcription provider and save its key in Settings. Existing provider preferences remain unchanged.
+The script builds `V2T.app`, generates its **V2T text icon** at native macOS sizes, adds permission descriptions, and signs it locally. Move the app to `/Applications` if desired. Building the bundle is recommended for microphone, system audio, and Calendar permission prompts. Choose the final transcription provider and save its key in Settings. Existing provider preferences remain unchanged.
 
 To select a particular installed SDK, set `SDKROOT` when building. Tests use Swift Testing (Swift 6+):
 
@@ -107,7 +102,7 @@ To select a particular installed SDK, set `SDKROOT` when building. Tests use Swi
 bash Scripts/test.sh
 ```
 
-Tests use isolated libraries, injected credentials, and mocked network responses. They cover provider/key isolation, Deepgram parsing and request options, cancellation races, recovery and transactional saves, transcript archives, trim/apply/cancel behavior, mute/pause timing, stereo silence, speaker correction persistence/retiming/undo, calendar matching, manual-title protection, absolute dates, OAuth PKCE/callback validation, calendar pagination/filtering, token refresh, and disconnect races. Live audio devices, Google consent, and Apple Intelligence availability also need a manual check on the target Mac; no real account credentials or microphone audio are used by the automated tests.
+Tests use isolated libraries, injected credentials, and mocked network responses. They cover provider/key isolation, Deepgram parsing and request options, cancellation races, recovery and transactional saves, transcript archives, trim/apply/cancel behavior, mute/pause timing, stereo silence, speaker correction persistence/retiming/undo, calendar matching, manual-title protection, absolute dates, streaming request configuration, PCM conversion, bounded buffers, partial/final text updates, pause/mute/stop behavior, Calendar permission/selection handling, capture stalls, playable file finalization, and incomplete-recording warnings. Live audio devices, Deepgram connectivity, Calendar permission/sync, and Apple Intelligence availability also need a manual check on the target Mac; no real account credentials or microphone audio are used by the automated tests.
 
 See [the design review](Docs/DESIGN_REVIEW.md) for the interface decisions and [the manual validation checklist](Docs/MANUAL_CHECKS.md) for device/account-dependent checks.
 
@@ -131,3 +126,11 @@ Both providers return words that are normalized into V2T's local `Transcript` fo
 1. Upload the local file directly to `POST https://api.deepgram.com/v1/listen` with token authentication and the options described above.
 2. Decode the returned word timestamps, punctuated words, language, and speaker numbers. Reject malformed, empty, or undiarized responses without replacing an existing transcript.
 3. Use the same segmentation, local persistence, search, export, and editing logic as the other provider. Settings are snapshotted when the request starts; switching providers mid-job does not redirect it.
+
+## Capture integrity and diagnostics
+
+V2T watches successful audio writes independently of the recording timer. If capture stalls, it warns immediately and attempts bounded call-tap recovery. Finished recordings use the playable file duration, and substantially incomplete captures receive a persistent warning. Original call and mic tracks are retained. Incomplete captures are not automatically titled or submitted for final transcription. The app never stretches a truncated file to match the wall-clock timer.
+
+Microphone capture uses the regular input engine. The prior full-duplex voice-processing path stalled both the app tap and microphone on the target Mac, and has been removed. Use headphones or enable the mic only while speaking to avoid speaker bleed.
+
+Metadata-only diagnostics are stored in `~/Library/Logs/V2T/live-transcription.log` (bounded to roughly 256 KB). Open the folder from Settings. No administrator or Console access is needed; logs exclude audio, transcript text, calendar titles, and credentials.

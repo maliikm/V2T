@@ -38,7 +38,7 @@ struct RecordingTransportView: View {
                 Button { capture.togglePause() } label: {
                     Image(systemName: capture.isPaused ? "play.fill" : "pause.fill")
                 }.accessibilityLabel(capture.isPaused ? "Resume recording" : "Pause recording")
-                Text(TranscriptFormatter.clock(capture.elapsed)).monospacedDigit()
+                Text(TranscriptFormatter.recordingClock(capture.elapsed)).monospacedDigit()
                 Spacer()
             }
             Button { capture.toggleRecording() } label: {

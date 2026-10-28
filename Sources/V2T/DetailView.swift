@@ -32,6 +32,11 @@ struct DetailView: View {
     private func content(_ recording: Recording) -> some View {
         VStack(spacing: 0) {
             header(recording)
+            if let warning = recording.captureWarning ?? (player.currentRecordingID == recording.id && player.duration > 0 ? CaptureValidation.warning(expected: recording.duration, actual: player.duration) : nil) {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if editSession.isActive {
                 EditModeView(session: editSession, recording: recording) {

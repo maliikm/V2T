@@ -262,7 +262,7 @@ final class LibraryStore: ObservableObject {
     @discardableResult
     func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date,
                          title: String? = nil, folderID: UUID? = nil,
-                         rawTracks: [String: URL] = [:], endedAt: Date = Date()) -> Recording? {
+                         rawTracks: [String: URL] = [:], endedAt: Date = Date(), captureWarning: String? = nil) -> Recording? {
         let directory = tempURL.deletingLastPathComponent()
         guard directory.deletingLastPathComponent().standardizedFileURL == recoveryRootURL.standardizedFileURL,
               rawTracks.values.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL }) else {
@@ -272,7 +272,7 @@ final class LibraryStore: ObservableObject {
         let recording = Recording(
             title: title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title! : nextRecordingTitle(),
             createdAt: startedAt, duration: duration, audioFileName: "audio.m4a", folderID: folderID,
-            automaticTitleEligible: true, endedAt: endedAt
+            automaticTitleEligible: captureWarning == nil, endedAt: endedAt, captureWarning: captureWarning
         )
         let draft = CaptureDraft(recording: recording, audioFileName: tempURL.lastPathComponent,
                                  tracks: rawTracks.mapValues(\.lastPathComponent))
