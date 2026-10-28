@@ -32,7 +32,7 @@ struct FalTranscription: Decodable {
 /// One contiguous run of speech by a single speaker.
 struct TranscriptSegment: Identifiable, Codable, Equatable {
     var id = UUID()
-    let speakerId: String
+    var speakerId: String
     let start: Double
     var end: Double
     var text: String
@@ -58,7 +58,7 @@ struct TranscriptWord: Codable, Equatable {
     let text: String
     let start: Double
     let end: Double
-    let speakerId: String
+    var speakerId: String
     let isEvent: Bool
 }
 
@@ -83,6 +83,31 @@ struct Transcript: Codable, Equatable {
         }
         return Transcript(sourceFileName: sourceFileName, languageCode: languageCode,
                           segments: makeSegments(timed), speakerIds: appearanceOrder(timed), words: ordered)
+    }
+
+    /// Correct a passage (or every passage with its label) without losing
+    /// word timing. Subsequent trim/delete edits use these corrected words.
+    func reassigningSpeaker(at index: Int, to speakerID: String, allOccurrences: Bool = false) -> Transcript {
+        guard segments.indices.contains(index), speakerIds.contains(speakerID) else { return self }
+        let oldID = segments[index].speakerId
+        let affected = allOccurrences ? segments.filter { $0.speakerId == oldID } : [segments[index]]
+        let affectedIDs = Set(affected.map(\.id))
+        let updatedSegments = segments.map { segment in
+            var updated = segment
+            if affectedIDs.contains(segment.id) { updated.speakerId = speakerID }
+            return updated
+        }
+        let updatedWords = words?.map { word in
+            var updated = word
+            if word.speakerId == oldID && (allOccurrences || affected.contains(where: {
+                word.start >= $0.start && (word.start < $0.end || ($0.start == $0.end && word.start == $0.start))
+            })) {
+                updated.speakerId = speakerID
+            }
+            return updated
+        }
+        return Transcript(sourceFileName: sourceFileName, languageCode: languageCode,
+                          segments: updatedSegments, speakerIds: speakerIds, words: updatedWords, provider: provider, model: model)
     }
 
     /// Segment containing (or most recently before) the given playback time.

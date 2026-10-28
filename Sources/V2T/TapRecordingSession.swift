@@ -41,9 +41,9 @@ final class TapRecordingSession {
     /// Fired when buffers have been all-zero since recording started —
     /// almost certainly a System Audio Recording permission denial.
     var onSuspectedPermissionDenial: (() -> Void)?
+    var callAudioSink: LiveAudioSink?
+    var micAudioSink: LiveAudioSink?
 
-    private let levelBox = TapLevelBox()
-    private let micLevelBox = TapLevelBox()
     private var tap = ProcessTap()
     private var tapRecorder: ProcessTapRecorder?
     private var micRecorder: MicTrackRecorder?
@@ -59,25 +59,20 @@ final class TapRecordingSession {
     /// Wall-clock time actually recorded (pauses excluded).
     private(set) var activeDuration: TimeInterval = 0
     private var segmentStartedAt: Date?
+    private var timeline = CaptureTimeline()
 
     var appFileURL: URL { directory.appendingPathComponent("app.m4a") }
     var micFileURL: URL { directory.appendingPathComponent("mic.m4a") }
     var hasMicTrack: Bool { micRecorder != nil }
 
-    /// Peak amplitude (0...1) seen since the last call — feeds the live
-    /// waveform in the main window.
-    func takeRecentPeak() -> Float {
-        levelBox.take()
-    }
-
-    func takeRecentMicPeak() -> Float { micLevelBox.take() }
-
     /// Seconds the mic track started after the app track (negative: before).
     var micOffsetSeconds: Double? {
         guard let appHostTime = tapRecorder?.firstBufferHostTime,
               let micHostTime = micRecorder?.firstBufferHostTime else { return nil }
-        return AVAudioTime.seconds(forHostTime: micHostTime)
-            - AVAudioTime.seconds(forHostTime: appHostTime)
+        return timeline.offset(
+            from: AVAudioTime.seconds(forHostTime: appHostTime),
+            to: AVAudioTime.seconds(forHostTime: micHostTime)
+        )
     }
 
     init(target: CaptureTarget, baseDirectory: URL) {
@@ -87,9 +82,8 @@ final class TapRecordingSession {
         )
     }
 
-    /// Starts the app-audio tap and, when `withMic`, the microphone track.
-    /// A mic failure never aborts the session — the app track is the product.
-    func start(withMic: Bool) throws {
+    /// Starts app audio immediately; the mic can be enabled at any time.
+    func start() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         currentObjectIDs = target.process?.objectIDs ?? []
@@ -106,9 +100,9 @@ final class TapRecordingSession {
         recorder.onBuffer = { [weak self] peak in
             guard let self else { return }
             self.watchdog.ingest(isSilent: peak == 0)
-            self.levelBox.note(peak)
         }
         tapRecorder = recorder
+        recorder.onAudio = { [callAudioSink] buffer in callAudioSink?.append(buffer) }
         try tap.run(on: ioQueue, ioBlock: recorder.makeIOBlock(tapFormat: tapFormat))
         installRateListener()
 
@@ -128,20 +122,23 @@ final class TapRecordingSession {
             Task { @MainActor in self?.rebuildTap(reason: "default output device changed") }
         }
 
-        if withMic {
-            let mic = MicTrackRecorder()
-            mic.onBuffer = { [weak self] peak in self?.micLevelBox.note(peak) }
-            do {
-                try mic.start(fileURL: micFileURL, captureFormat: .m4a)
-                micRecorder = mic
-            } catch {
-                Self.logger.error("Mic track failed to start, continuing app-only: \(String(describing: error), privacy: .public)")
-                try? FileManager.default.removeItem(at: micFileURL) // no stub files
-            }
-        }
-
         startedAt = Date()
         segmentStartedAt = startedAt
+    }
+
+    func setMicrophoneEnabled(_ enabled: Bool) throws {
+        guard !stopped, startedAt != nil else { return }
+        if let micRecorder {
+            // Keep the track's clock running. Muting writes silence, whereas
+            // pausing drops time from BOTH tracks.
+            micRecorder.isMuted = !enabled
+        } else if enabled {
+            let mic = MicTrackRecorder()
+            mic.onAudio = { [micAudioSink] buffer in micAudioSink?.append(buffer) }
+            mic.isPaused = isPaused
+            try mic.start(fileURL: micFileURL, captureFormat: .m4a)
+            micRecorder = mic
+        }
     }
 
     // MARK: - Pause / resume
@@ -151,6 +148,7 @@ final class TapRecordingSession {
     func pause() {
         guard !stopped, !isPaused, startedAt != nil else { return }
         isPaused = true
+        timeline.pause(at: AVAudioTime.seconds(forHostTime: mach_absolute_time()))
         tapRecorder?.isPaused = true
         micRecorder?.isPaused = true
         if let segmentStartedAt {
@@ -162,6 +160,7 @@ final class TapRecordingSession {
     func resume() {
         guard !stopped, isPaused else { return }
         isPaused = false
+        timeline.resume(at: AVAudioTime.seconds(forHostTime: mach_absolute_time()))
         segmentStartedAt = Date()
         tapRecorder?.isPaused = false
         micRecorder?.isPaused = false
@@ -241,28 +240,6 @@ final class TapRecordingSession {
             newTap.invalidate()
             Self.logger.error("Tap rebuild failed: \(String(describing: error), privacy: .public)")
         }
-    }
-}
-
-/// Peak level handoff from the tap writer queue to the main-actor UI timer.
-final class TapLevelBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var peak: Float = 0
-
-    func note(_ value: Float) {
-        lock.lock()
-        if value > peak { peak = value }
-        lock.unlock()
-    }
-
-    /// Returns the max since the previous take, then resets.
-    func take() -> Float {
-        lock.lock()
-        defer {
-            peak = 0
-            lock.unlock()
-        }
-        return peak
     }
 }
 

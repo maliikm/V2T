@@ -33,8 +33,10 @@ final class LibraryStore: ObservableObject {
     let rootURL: URL
     let recoveryRootURL: URL
     private let writeData: (Data, URL) throws -> Void
+    var onTitleContextChanged: ((UUID) -> Void)?
     private var transcriptCache: [UUID: Transcript] = [:]
     private var searchTextCache: [UUID: String] = [:]
+    @Published private(set) var speakerEditHistory: [UUID: [Transcript]] = [:]
 
     init(rootURL: URL? = nil, writeData: @escaping (Data, URL) throws -> Void = {
         try $0.write(to: $1, options: .atomic)
@@ -260,7 +262,7 @@ final class LibraryStore: ObservableObject {
     @discardableResult
     func addRecordedFile(at tempURL: URL, duration: Double, startedAt: Date,
                          title: String? = nil, folderID: UUID? = nil,
-                         rawTracks: [String: URL] = [:]) -> Recording? {
+                         rawTracks: [String: URL] = [:], endedAt: Date = Date()) -> Recording? {
         let directory = tempURL.deletingLastPathComponent()
         guard directory.deletingLastPathComponent().standardizedFileURL == recoveryRootURL.standardizedFileURL,
               rawTracks.values.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL }) else {
@@ -269,7 +271,8 @@ final class LibraryStore: ObservableObject {
         }
         let recording = Recording(
             title: title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title! : nextRecordingTitle(),
-            createdAt: startedAt, duration: duration, audioFileName: "audio.m4a", folderID: folderID
+            createdAt: startedAt, duration: duration, audioFileName: "audio.m4a", folderID: folderID,
+            automaticTitleEligible: true, endedAt: endedAt
         )
         let draft = CaptureDraft(recording: recording, audioFileName: tempURL.lastPathComponent,
                                  tracks: rawTracks.mapValues(\.lastPathComponent))
@@ -337,6 +340,7 @@ final class LibraryStore: ObservableObject {
         do { try fm.removeItem(at: directory) }
         catch { lastError = "Recording saved; the extra recovery copy couldn't be removed: \(error.localizedDescription)" }
         refreshRecovery()
+        onTitleContextChanged?(recording.id)
         return recording
     }
 
@@ -365,7 +369,20 @@ final class LibraryStore: ObservableObject {
         guard var recording = recording(with: id) else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         recording.title = trimmed.isEmpty ? recording.title : trimmed
+        if !trimmed.isEmpty {
+            recording.automaticTitleEligible = false
+            recording.titleSource = nil
+        }
         update(recording)
+    }
+
+    @discardableResult
+    func applyAutomaticTitle(_ title: String, source: String, for id: UUID, expectedTitle: String) -> Bool {
+        guard var recording = recording(with: id), recording.automaticTitleEligible == true,
+              recording.title == expectedTitle else { return false }
+        recording.title = title
+        recording.titleSource = source
+        return update(recording)
     }
 
     func toggleFavorite(_ id: UUID) {
@@ -386,10 +403,29 @@ final class LibraryStore: ObservableObject {
         update(recording)
     }
 
+    func reassignSpeaker(for id: UUID, segmentIndex: Int, to speakerID: String, allOccurrences: Bool = false) {
+        guard let original = transcript(for: id) else { return }
+        let updated = original.reassigningSpeaker(at: segmentIndex, to: speakerID, allOccurrences: allOccurrences)
+        guard updated != original else { return }
+        if saveTranscript(updated, for: id, preserveSpeakerHistory: true) {
+            var history = speakerEditHistory[id, default: []]
+            history.append(original)
+            speakerEditHistory[id] = Array(history.suffix(20))
+        }
+    }
+
+    func undoSpeakerEdit(for id: UUID) {
+        guard let previous = speakerEditHistory[id]?.last else { return }
+        if saveTranscript(previous, for: id, preserveSpeakerHistory: true) {
+            speakerEditHistory[id]?.removeLast()
+        }
+    }
+
     func delete(_ id: UUID) {
         do {
             try FileManager.default.removeItem(at: folderURL(for: id))
             recordings.removeAll { $0.id == id }
+            speakerEditHistory[id] = nil
             transcriptCache[id] = nil
             searchTextCache[id] = nil
         } catch { lastError = "Couldn't delete recording: \(error.localizedDescription)" }
@@ -450,6 +486,7 @@ final class LibraryStore: ObservableObject {
                 throw error
             }
             if let index = recordings.firstIndex(where: { $0.id == id }) { recordings[index] = recording }
+            speakerEditHistory[id] = nil
             transcriptCache[id] = recording.hasTranscript ? preservedTranscript : nil
             searchTextCache[id] = nil
             try? fm.removeItem(at: backup)
@@ -463,6 +500,19 @@ final class LibraryStore: ObservableObject {
 
     // MARK: - Transcripts
 
+    func saveLivePreview(_ text: String, for id: UUID) {
+        guard recording(with: id) != nil, !text.isEmpty else { return }
+        do {
+            try ("Live preview — not the final diarized transcript.\n\n" + text)
+                .write(to: folderURL(for: id).appendingPathComponent("live-preview.txt"), atomically: true, encoding: .utf8)
+            onTitleContextChanged?(id)
+        } catch { lastError = "Couldn't save the live preview: \(error.localizedDescription)" }
+    }
+
+    func livePreview(for id: UUID) -> String? {
+        try? String(contentsOf: folderURL(for: id).appendingPathComponent("live-preview.txt"), encoding: .utf8)
+    }
+
     func transcript(for id: UUID) -> Transcript? {
         if let cached = transcriptCache[id] { return cached }
         guard let data = try? Data(contentsOf: transcriptURL(for: id)),
@@ -474,7 +524,7 @@ final class LibraryStore: ObservableObject {
     }
 
     @discardableResult
-    func saveTranscript(_ transcript: Transcript, for id: UUID) -> Bool {
+    func saveTranscript(_ transcript: Transcript, for id: UUID, preserveSpeakerHistory: Bool = false) -> Bool {
         guard var recording = recording(with: id) else { return false }
         let previousRecording = recording
         let destination = transcriptURL(for: id)
@@ -497,7 +547,7 @@ final class LibraryStore: ObservableObject {
                     let markdown = TranscriptFormatter.markdown(old, names: previousRecording.speakerNames)
                     try writeData(Data(markdown.utf8), archive.appendingPathComponent("transcript.md"))
                 }
-                recording.speakerNames = [:]
+                if !preserveSpeakerHistory { recording.speakerNames = [:] }
             }
             try writeData(Self.encoder.encode(transcript), destination)
             transcriptCache[id] = nil
@@ -520,6 +570,10 @@ final class LibraryStore: ObservableObject {
             if let index = recordings.firstIndex(where: { $0.id == id }) { recordings[index] = recording }
             transcriptCache[id] = transcript
             searchTextCache[id] = nil
+            if !preserveSpeakerHistory {
+                speakerEditHistory[id] = nil
+                onTitleContextChanged?(id)
+            }
             return true
         } catch {
             lastError = "Couldn't save transcript: \(error.localizedDescription)"

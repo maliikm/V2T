@@ -18,9 +18,15 @@ struct TranscriptPane: View {
     var body: some View {
         Group {
             if let status = transcriber.status(for: recording.id) {
-                progressState(status)
+                if let preview = store.livePreview(for: recording.id) {
+                    previewBody(preview, status: status.label)
+                } else {
+                    progressState(status)
+                }
             } else if let transcript = store.transcript(for: recording.id), recording.hasTranscript {
                 transcriptBody(transcript)
+            } else if let preview = store.livePreview(for: recording.id) {
+                previewBody(preview, status: transcriber.error(for: recording.id) ?? "Live preview saved. Generate the final transcript for speaker labels.")
             } else {
                 emptyState
             }
@@ -28,6 +34,26 @@ struct TranscriptPane: View {
     }
 
     // MARK: - States
+
+    private func previewBody(_ text: String, status: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(status).font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("Copy Preview") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                if transcriber.isBusy(recording.id) {
+                    Button("Cancel Final Transcription") { transcriber.cancel(recording.id) }
+                } else {
+                    Button("Generate Final Transcript") {
+                        transcriber.transcribe(recording, store: store, settings: settings)
+                    }.disabled(!settings.hasAPIKey)
+                }
+            }
+            ScrollView { Text(text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+        }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
     private func progressState(_ status: TranscribeStatus) -> some View {
         VStack(spacing: 10) {
@@ -116,6 +142,14 @@ struct TranscriptPane: View {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled).padding(12)
             }
             speakerLegend(transcript)
+            if !(store.speakerEditHistory[recording.id] ?? []).isEmpty {
+                Button("Undo Speaker Change") { store.undoSpeakerEdit(for: recording.id) }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
+            if let error = store.lastError {
+                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 20)
+            }
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -142,7 +176,7 @@ struct TranscriptPane: View {
 
     private func speakerLegend(_ transcript: Transcript) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Speakers — click a name to identify who's who")
+            Text("Name speakers here. Use a passage's speaker menu to correct who said it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -188,26 +222,38 @@ struct TranscriptPane: View {
             for: segment.speakerId, names: names, order: transcript.speakerIds
         )
         let isCurrent = currentSegmentIndex(transcript) == index
-        // Long turns are split into several blocks; repeat the speaker
-        // header only when the speaker actually changes.
-        let isNewSpeaker = index == 0 || transcript.segments[index - 1].speakerId != segment.speakerId
-
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if isNewSpeaker {
-                    Circle()
-                        .fill(color(forSpeakerIndex: speakerIndex))
-                        .frame(width: 7, height: 7)
-                    Text(name)
-                        .font(.subheadline.weight(.semibold))
+                Menu {
+                    Text("Assign this passage to")
+                    ForEach(transcript.speakerIds, id: \.self) { id in
+                        Button(TranscriptFormatter.displayName(for: id, names: names, order: transcript.speakerIds)) {
+                            store.reassignSpeaker(for: recording.id, segmentIndex: index, to: id)
+                        }
+                        .disabled(id == segment.speakerId)
+                    }
+                    Divider()
+                    Menu("Reassign All “\(name)” Passages") {
+                        ForEach(transcript.speakerIds.filter { $0 != segment.speakerId }, id: \.self) { id in
+                            Button(TranscriptFormatter.displayName(for: id, names: names, order: transcript.speakerIds)) {
+                                store.reassignSpeaker(for: recording.id, segmentIndex: index, to: id, allOccurrences: true)
+                            }
+                        }
+                    }
+                } label: {
+                    Text(name).font(.subheadline.weight(.semibold))
                         .foregroundStyle(color(forSpeakerIndex: speakerIndex))
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Assign this passage to another speaker")
                 Text(TranscriptFormatter.timestamp(segment.start))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Text(segment.text)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -226,6 +272,7 @@ struct TranscriptPane: View {
                 player.seek(to: segment.start)
                 if !player.isPlaying { player.play() }
             }
+            .disabled(player.isPlaybackBlocked)
             Button("Copy Text") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(segment.text, forType: .string)

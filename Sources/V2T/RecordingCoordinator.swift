@@ -46,6 +46,9 @@ final class RecordingCoordinator: ObservableObject {
     var error: String? { lastError ?? recorder.lastError ?? appAudio.lastError }
 
     var summary: String {
+        if appAudio.isRecording {
+            return "\(appAudio.targetName) · Mic \(appAudio.isMicEnabled ? "on" : "off")"
+        }
         let source = configuration.source == .application
             ? configuration.appName ?? appAudio.availableApps.first(where: { $0.id == configuration.appID })?.name ?? "Choose an application"
             : configuration.source.title
@@ -86,7 +89,7 @@ final class RecordingCoordinator: ObservableObject {
                 // Resolve the exact selection. Never substitute another app or
                 // broaden a missing application to all system audio.
                 let app = try chosen.target(in: appAudio.availableApps)
-                if chosen.usesMicrophone {
+                if chosen.source == .microphone {
                     guard await requestMicrophoneAccess() else {
                         lastError = "Microphone access is off. Enable V2T in System Settings → Privacy & Security → Microphone."
                         return
@@ -96,10 +99,10 @@ final class RecordingCoordinator: ObservableObject {
                     self?.didSave(recording)
                 }
                 if chosen.source == .microphone {
-                    recorder.start(store: store, folderID: folderID, onFinished: finished)
+                    recorder.start(store: store, settings: settings, folderID: folderID, onFinished: finished)
                 } else {
                     appAudio.start(app: app, withMic: chosen.includesMicrophone,
-                                   store: store, folderID: folderID, onFinished: finished)
+                                   store: store, settings: settings, folderID: folderID, onFinished: finished)
                 }
             } catch { lastError = error.localizedDescription }
         }

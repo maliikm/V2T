@@ -10,6 +10,8 @@ struct V2TApp: App {
     @StateObject private var transcriber: TranscriptionManager
     @StateObject private var appAudio: AppAudioRecorder
     @StateObject private var capture: RecordingCoordinator
+    @StateObject private var calendar = GoogleCalendarConnection()
+    @StateObject private var titleService = RecordingTitleService()
 
     init() {
         let store = LibraryStore()
@@ -38,7 +40,10 @@ struct V2TApp: App {
                 .environmentObject(appAudio)
                 .environmentObject(capture)
                 .frame(minWidth: 860, minHeight: 560)
-                .onAppear { appDelegate.capture = capture }
+                .onAppear {
+                    appDelegate.capture = capture
+                    titleService.configure(store: store, settings: settings, calendar: calendar)
+                }
         }
 
         MenuBarExtra("V2T", systemImage: capture.isRecording ? "record.circle.fill" : "waveform.circle") {
@@ -50,6 +55,8 @@ struct V2TApp: App {
         Settings {
             SettingsView()
                 .environmentObject(settings)
+                .environmentObject(calendar)
+                .environmentObject(titleService)
         }
     }
 }
@@ -76,20 +83,32 @@ struct MainWindow: View {
             RecordingsListView(selection: $selection, folder: folderSelection ?? .all)
                 .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 400)
         } detail: {
-            if recorder.isRecording {
-                RecordingSessionView()
-            } else if appAudio.isRecording || appAudio.isSaving {
-                AppAudioSessionView()
-            } else if recorder.isSaving {
-                ProgressView("Saving recording…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                DetailView(recordingID: selection)
+            VStack(spacing: 0) {
+                if selection != nil && (capture.isRecording || capture.isSaving) {
+                    ActiveRecordingBar { selection = nil }
+                    Divider()
+                }
+                if selection != nil {
+                    DetailView(recordingID: selection)
+                } else if recorder.isRecording {
+                    RecordingSessionView()
+                } else if appAudio.isRecording || appAudio.isSaving {
+                    AppAudioSessionView()
+                } else if recorder.isSaving {
+                    ProgressView("Saving recording…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    DetailView(recordingID: nil)
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { LibraryStatusView() }
         .onAppear {
+            player.observeCapture(recorder: recorder, appAudio: appAudio)
             SpaceKeyPlaybackMonitor.install(player: player, recorder: recorder)
             AppAudioHotkeys.install(coordinator: capture)
+        }
+        .onChange(of: capture.isRecording) { _, recording in
+            if recording { selection = nil }
         }
         .onChange(of: folderSelection) { _, newValue in
             if case .folder(let id) = newValue { capture.selectedFolderID = id }
@@ -106,7 +125,7 @@ struct MainWindow: View {
             if !stillVisible { selection = nil }
         }
         .onChange(of: store.lastSavedRecordingID, initial: true) { _, id in
-            guard let recording = store.recording(with: id) else { return }
+            guard selection == nil, let recording = store.recording(with: id) else { return }
             folderSelection = recording.folderID.map(FolderSelection.folder) ?? .all
             selection = recording.id
         }

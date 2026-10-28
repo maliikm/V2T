@@ -9,6 +9,9 @@ struct MenuBarView: View {
             if capture.isBusy {
                 VStack(alignment: .leading, spacing: 14) {
                     Text(capture.summary).font(.headline)
+                    if capture.appAudio.isRecording {
+                        MicrophoneCaptureButton().environmentObject(capture.appAudio)
+                    }
                     RecordingTransportView()
                 }.padding(20).frame(width: 380)
             } else {

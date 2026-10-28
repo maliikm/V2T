@@ -1,10 +1,15 @@
 import SwiftUI
+import Speech
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
+    @EnvironmentObject var calendar: GoogleCalendarConnection
+    @EnvironmentObject var titleService: RecordingTitleService
     @State private var keyInput = ""
     @State private var saved = false
     @State private var keyError: String?
+    @State private var importingGoogleClient = false
 
     var body: some View {
         Form {
@@ -29,7 +34,7 @@ struct SettingsView: View {
                 }
                 if let keyError { Text(keyError).foregroundStyle(.red) }
             } header: {
-                Text("Transcription Provider")
+                Text("Final Transcript Service")
             } footer: {
                 Text("Each provider's key is stored separately in your macOS Keychain. Changing providers affects new requests, not existing transcripts or jobs already running.")
                     .foregroundStyle(.secondary)
@@ -64,8 +69,81 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Show live transcripts while recording", isOn: $settings.liveTranscriptionEnabled)
+                Picker("Live transcript language", selection: $settings.liveTranscriptionLocale) {
+                    if !SFSpeechRecognizer.supportedLocales().contains(where: { $0.identifier == settings.liveTranscriptionLocale }) {
+                        Text(Locale.current.localizedString(forIdentifier: settings.liveTranscriptionLocale) ?? settings.liveTranscriptionLocale)
+                            .tag(settings.liveTranscriptionLocale)
+                    }
+                    ForEach(SFSpeechRecognizer.supportedLocales().map(\.identifier).sorted(), id: \.self) { id in
+                        Text(Locale.current.localizedString(forIdentifier: id) ?? id).tag(id)
+                    }
+                }
+            } header: {
+                Text("Live Transcripts")
+            } footer: {
+                Text("Uses on-device speech recognition when available for your language. The preview is saved separately; your selected provider produces the final speaker-labeled transcript after recording.")
+            }
+
+            Section {
+                Toggle("Automatically title new recordings", isOn: $settings.autoTitle)
+                Text(RecordingTitleService.modelStatus).font(.caption).foregroundStyle(.secondary)
+                if titleService.status != "Titles are generated on this Mac." {
+                    Text(titleService.status).font(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Local AI Titles")
+            } footer: {
+                Text("Uses recording time, selected Google calendars, and transcript content. Titles can improve when the final transcript arrives. Renaming a recording yourself keeps that title.")
+            }
+
+            Section {
+                if calendar.isConnected {
+                    Label("Google Calendar connected", systemImage: "checkmark.circle.fill")
+                    ForEach(calendar.calendars) { item in
+                        Toggle(item.summary, isOn: Binding(
+                            get: { calendar.selectedCalendarIDs.contains(item.id) || (item.primary == true && calendar.selectedCalendarIDs.contains("primary")) },
+                            set: { selected in
+                                if item.primary == true { calendar.selectedCalendarIDs.remove("primary") }
+                                if selected { calendar.selectedCalendarIDs.insert(item.id) }
+                                else { calendar.selectedCalendarIDs.remove(item.id) }
+                            }
+                        ))
+                    }
+                    HStack {
+                        Button("Refresh Calendars") { Task { await calendar.refreshCalendars() } }
+                        Button("Disconnect") { calendar.disconnect() }
+                    }
+                } else {
+                    Button(calendar.hasClient ? "Replace OAuth Client JSON…" : "Import Desktop OAuth Client JSON…") {
+                        importingGoogleClient = true
+                    }
+                    .disabled(calendar.isConnecting)
+                    if calendar.isConnecting {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Finish signing in in your browser…")
+                            Button("Cancel") { calendar.cancelConnection() }
+                        }
+                    } else {
+                        Button("Connect Google Calendar…") { calendar.connect() }
+                            .disabled(!calendar.hasClient)
+                    }
+                    Link("Google Calendar connection setup", destination: URL(string: "https://github.com/maliikm/V2T/blob/main/README.md#google-calendar--local-ai-titles")!)
+                }
+                if let error = calendar.lastError {
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                }
+            } header: {
+                Text("Google Calendar")
+            } footer: {
+                Text("Direct Google sign-in with read-only calendar access. Credentials stay in Keychain. Disconnect removes saved tokens from this Mac; access can also be revoked in your Google account.")
+            }
+
+            Section {
                 LabeledContent("Start/stop recording", value: "⌘⌥R")
                 LabeledContent("Pause/resume recording", value: "⌘⌥P")
+                LabeledContent("Mic on/off during app-audio recording", value: "⌘⌥M")
             } header: {
                 Text("Shortcuts")
             } footer: {
@@ -74,7 +152,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520, height: 620)
+        .frame(width: 560, height: 740)
         .padding(.vertical, 8)
         .onAppear { keyInput = settings.apiKey }
         .onChange(of: settings.provider) { _, _ in
@@ -83,5 +161,9 @@ struct SettingsView: View {
             keyError = nil
         }
         .onChange(of: keyInput) { _, _ in saved = false }
+        .task { await calendar.refreshCalendars() }
+        .fileImporter(isPresented: $importingGoogleClient, allowedContentTypes: [.json]) { result in
+            if case .success(let url) = result { calendar.importClient(from: url) }
+        }
     }
 }
