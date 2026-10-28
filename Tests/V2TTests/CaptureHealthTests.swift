@@ -1,8 +1,34 @@
 import AVFoundation
+import CoreAudio
 import Testing
 @testable import V2T
 
 struct CaptureHealthTests {
+    @Test func updatingChromeProcessesPreservesTapIdentityAndScope() throws {
+        guard #available(macOS 14.4, *) else { return }
+        let original = CATapDescription(stereoMixdownOfProcesses: [1, 2])
+        original.uuid = UUID()
+        original.name = "Test capture"
+        original.isPrivate = true
+        original.muteBehavior = .unmuted
+        let updated = ProcessTap.appDescription(updating: original, processes: [2, 3])
+        #expect(updated.uuid == original.uuid)
+        #expect(updated.processes == [2, 3])
+        #expect(original.processes == [1, 2])
+        #expect(!updated.isExclusive && updated.isMixdown && !updated.isMono)
+        #expect(updated.isPrivate && updated.muteBehavior == .unmuted)
+    }
+    @Test func silenceIsTemporaryInformationAndResetsWhenSoundReturns() {
+        let signal = CaptureSignalMonitor()
+        #expect(!signal.isQuiet(now: 9, activeSince: 0))
+        #expect(signal.isQuiet(now: 11, activeSince: 0))
+        signal.ingest(peak: 0.02, now: 12)
+        #expect(!signal.isQuiet(now: 12, activeSince: 0))
+        #expect(signal.isQuiet(now: 22, activeSince: 0))
+        #expect(!signal.isQuiet(now: 100, activeSince: 99)) // Resume grace.
+        signal.ingest(peak: 0, now: 101)
+        #expect(signal.isQuiet(now: 110, activeSince: 99))
+    }
     @Test func detectsMissingCallbacksButExcludesPausedTimeAndStartupGrace() {
         let progress = CaptureProgress()
         #expect(!progress.snapshot.isStalled(now: 12, activeSince: 10))

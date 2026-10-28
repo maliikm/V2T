@@ -17,10 +17,7 @@ struct MenuBarView: View {
             } else {
                 RecordingSetupView()
             }
-            if let error = capture.error {
-                Text(error).font(.caption).foregroundStyle(.red)
-                    .padding(.horizontal, 20).padding(.bottom, 12).frame(maxWidth: 380)
-            }
+            CaptureStatusView().frame(maxWidth: 380)
             Divider()
             HStack {
                 Button("Open V2T") {

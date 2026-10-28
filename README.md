@@ -131,6 +131,8 @@ Both providers return words that are normalized into V2T's local `Transcript` fo
 
 V2T watches successful audio writes independently of the recording timer. If capture stalls, it warns immediately and attempts bounded call-tap recovery. Finished recordings use the playable file duration, and substantially incomplete captures receive a persistent warning. Original call and mic tracks are retained. Incomplete captures are not automatically titled or submitted for final transcription. The app never stretches a truncated file to match the wall-clock timer.
 
+Quiet audio does not restart capture or imply that macOS denied permission. After ten seconds without sound, one neutral status message suggests checking the source if audio should be playing; it clears when sound returns. Capture status appears once per window, including when browsing another recording. Chrome audio-process changes update the existing tap, and its recording clock starts immediately so quiet intervals remain in the saved timeline.
+
 Microphone capture uses the regular input engine. The prior full-duplex voice-processing path stalled both the app tap and microphone on the target Mac, and has been removed. Use headphones or enable the mic only while speaking to avoid speaker bleed.
 
 Metadata-only diagnostics are stored in `~/Library/Logs/V2T/live-transcription.log` (bounded to roughly 256 KB). Open the folder from Settings. No administrator or Console access is needed; logs exclude audio, transcript text, calendar titles, and credentials.

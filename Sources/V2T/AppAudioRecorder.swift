@@ -8,7 +8,7 @@ import Foundation
 /// Finished recordings land in the library and auto-transcribe.
 ///
 /// Process taps require macOS 14.4 and the System Audio Recording
-/// permission (a silent denial is detected by the silence watchdog).
+/// permission. Silence alone cannot establish whether permission was denied.
 @MainActor
 final class AppAudioRecorder: NSObject, ObservableObject {
     let liveTranscript = LiveTranscriber()
@@ -23,6 +23,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     @Published private(set) var availableApps: [AudioProcess] = []
     @Published private(set) var isSaving = false
     @Published var lastError: String?
+    @Published private(set) var captureNotice: CaptureNotice?
 
     static var isSupported: Bool {
         if #available(macOS 14.4, *) { return true }
@@ -56,7 +57,6 @@ final class AppAudioRecorder: NSObject, ObservableObject {
     }
 
     private static let unsupportedMessage = "Recording app audio requires macOS 14.4 or later."
-    private static let permissionMessage = "No audio is arriving — macOS is likely blocking system-audio capture. Allow V2T under System Settings → Privacy & Security → Screen & System Audio Recording (System Audio Recording Only), then try again."
 
     // MARK: - App discovery
 
@@ -102,6 +102,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         self.folderID = folderID
         self.onFinished = onFinished
         lastError = nil
+        captureNotice = nil
 
         let target: CaptureTarget = app.map { .app($0) } ?? .systemAudio
         let session = TapRecordingSession(
@@ -110,10 +111,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         )
         session.callAudioSink = liveTranscript.callSink
         session.micAudioSink = liveTranscript.micSink
-        session.onSuspectedPermissionDenial = { [weak self] in
-            self?.lastError = Self.permissionMessage
-        }
-        session.onCaptureWarning = { [weak self] message in self?.lastError = message }
+        session.onCaptureNotice = { [weak self] notice in self?.captureNotice = notice }
         let wantsMic = withMic
         do {
             try session.start()

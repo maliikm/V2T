@@ -33,9 +33,6 @@ struct RecordingSessionView: View {
             }
             .controlSize(.large)
             .padding(16)
-            if let error = recorder.lastError {
-                Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 20).padding(.bottom, 12)
-            }
         }
     }
 }

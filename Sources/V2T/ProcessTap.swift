@@ -78,7 +78,10 @@ final class ProcessTap {
                 kAudioAggregateDeviceMainSubDeviceKey: outputUID,
                 kAudioAggregateDeviceIsPrivateKey: true,
                 kAudioAggregateDeviceIsStackedKey: false,
-                kAudioAggregateDeviceTapAutoStartKey: true,
+                // Keep the device clock running while Chrome is quiet or
+                // replacing an audio helper. Waiting for a tapped process to
+                // start makes silence/rebuilds truncate the saved timeline.
+                kAudioAggregateDeviceTapAutoStartKey: false,
                 kAudioAggregateDeviceSubDeviceListKey: [
                     [kAudioSubDeviceUIDKey: outputUID]
                 ],
@@ -136,6 +139,31 @@ final class ProcessTap {
             throw CoreAudioError.osStatus(err, "AudioDeviceStart")
         }
         started = true
+    }
+
+    /// Retarget the existing tap when Chrome's helper processes change. The
+    /// aggregate device and its clock stay alive throughout the update.
+    func updateProcesses(_ objectIDs: [AudioObjectID]) throws {
+        guard tapID.isValid, let description = tapDescription, !objectIDs.isEmpty else { return }
+        let updated = Self.appDescription(updating: description, processes: objectIDs)
+        var value: CATapDescription = updated
+        var address = AudioObjectID.address(kAudioTapPropertyDescription)
+        let status = withUnsafePointer(to: &value) { pointer in
+            AudioObjectSetPropertyData(tapID, &address, 0, nil,
+                                       UInt32(MemoryLayout<CATapDescription>.size), pointer)
+        }
+        guard status == noErr else { throw CoreAudioError.osStatus(status, "update tapped processes") }
+        tapDescription = updated
+    }
+
+    static func appDescription(updating original: CATapDescription, processes: [AudioObjectID]) -> CATapDescription {
+        // CATapDescription inherits NSObject but does not implement NSCopying.
+        let updated = CATapDescription(stereoMixdownOfProcesses: processes)
+        updated.uuid = original.uuid
+        updated.name = original.name
+        updated.isPrivate = original.isPrivate
+        updated.muteBehavior = original.muteBehavior
+        return updated
     }
 
     func invalidate() {

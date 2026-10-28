@@ -15,4 +15,5 @@ Use a disposable test recording rather than an important call for the first run.
 - Review keyboard-only navigation, VoiceOver labels, dark mode, and large text settings. Inspect the V2T icon in Finder and the Dock.
 
 - Compare elapsed recording time against the saved file duration, including a long call, mic toggles, and device switches. Force a stalled source and verify the capture warning appears and saved partial audio is not presented as a full recording. Original tracks must remain available.
+- Record Chrome with the mic off and on, including at least twelve seconds of silence followed by resumed audio. Check call, mic, and mixed-file durations and the sound near the end. Silence must not restart the tap. A quiet-source message is neutral, appears once per window, and clears when sound returns; check with the sidebar hidden and while viewing another recording. Change Chrome's audio process set during capture and confirm the tap updates without truncating the file.
 - Check recording timers in the window, sidebar, and menu bar: `00:00:00` initially, then `01:00:00` at one hour, with no fractional seconds.

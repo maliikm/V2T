@@ -101,7 +101,12 @@ struct MainWindow: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { LibraryStatusView() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                CaptureStatusView(recordingWarning: store.recording(with: selection)?.captureWarning)
+                LibraryStatusView()
+            }
+        }
         .onAppear {
             player.observeCapture(recorder: recorder, appAudio: appAudio)
             SpaceKeyPlaybackMonitor.install(player: player, recorder: recorder)
