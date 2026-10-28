@@ -47,12 +47,13 @@ final class ProcessTapRecorder {
     private static let logger = Logger(subsystem: kV2TSubsystem, category: "ProcessTapRecorder")
 
     let fileURL: URL
-    private let file: AVAudioFile
+    private var file: AVAudioFile?
     private let writerQueue = DispatchQueue(label: "\(kV2TSubsystem).tap-writer", qos: .userInitiated)
     private var converter: AVAudioConverter?
 
     /// Called (on the writer queue) with each buffer's peak amplitude (0...1).
     var onBuffer: ((_ peak: Float) -> Void)?
+    var onAudio: ((AVAudioPCMBuffer) -> Void)?
 
     /// While true, incoming buffers are dropped (the tap keeps running so
     /// resume is instant and stays aligned with the mic track).
@@ -114,13 +115,16 @@ final class ProcessTapRecorder {
 
     /// Flushes pending writes (AVAudioFile closes on dealloc).
     func finish() {
-        writerQueue.sync { }
+        // Close the AAC file before the mixdown opens it for reading.
+        writerQueue.sync { file = nil }
     }
 
     // MARK: - Writer queue
 
     private func write(_ buffer: AVAudioPCMBuffer) {
+        guard let file else { return }
         onBuffer?(Self.peak(of: buffer))
+        onAudio?(buffer)
         do {
             // Full AVAudioFormat equality also compares channel layouts, which
             // differ (nil vs. default) between the tap ASBD and the file's
@@ -146,6 +150,7 @@ final class ProcessTapRecorder {
     /// Conversion for buffers captured after a tap rebuild changed the stream
     /// format (e.g. 44.1 kHz AirPods → 48 kHz speakers).
     private func writeConverted(_ buffer: AVAudioPCMBuffer) throws {
+        guard let file else { return }
         if converter?.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: file.processingFormat)
         }
@@ -260,15 +265,20 @@ final class MicTrackRecorder {
     }
 
     private let engine = AVAudioEngine()
-    private var file: AVAudioFile?
-    var onBuffer: ((Float) -> Void)?
+    private var writer: MicrophoneTrackWriter?
+    var onAudio: ((AVAudioPCMBuffer) -> Void)?
 
     /// Host time of the first captured buffer (for cross-track alignment).
-    private(set) var firstBufferHostTime: UInt64?
+    var firstBufferHostTime: UInt64? { writer?.firstBufferHostTime }
 
     /// While true, incoming buffers are dropped (engine keeps running so
     /// resume is instant and stays aligned with the app track).
-    var isPaused = false
+    var isPaused = false {
+        didSet { writer?.isPaused = isPaused }
+    }
+    var isMuted = false {
+        didSet { writer?.isMuted = isMuted }
+    }
 
     func start(fileURL: URL, captureFormat: CaptureFormat) throws {
         // Verify an input device exists BEFORE touching the engine —
@@ -286,6 +296,12 @@ final class MicTrackRecorder {
         guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
             throw MicError.invalidInputFormat
         }
+        // Voice processing reduces speaker bleed in the microphone input.
+        // Do not connect the mic to the mixer: that would monitor it audibly.
+        try input.setVoiceProcessingEnabled(true)
+        input.voiceProcessingOtherAudioDuckingConfiguration = .init(
+            enableAdvancedDucking: false, duckingLevel: .min
+        )
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw MicError.invalidInputFormat
@@ -300,16 +316,15 @@ final class MicTrackRecorder {
             commonFormat: format.commonFormat,
             interleaved: format.isInterleaved
         )
-        self.file = file
+        let writer = MicrophoneTrackWriter(file: file)
+        writer.isPaused = isPaused
+        writer.isMuted = isMuted
+        self.writer = writer
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, when in
-            guard let self, !self.isPaused else { return }
-            self.onBuffer?(ProcessTapRecorder.peak(of: buffer))
-            if self.firstBufferHostTime == nil {
-                self.firstBufferHostTime = when.hostTime
-            }
             do {
-                try file.write(from: buffer)
+                let audible = try writer.append(buffer, hostTime: when.isHostTimeValid ? when.hostTime : nil)
+                if audible { self?.onAudio?(buffer) }
             } catch {
                 Self.logger.error("Mic write failed: \(String(describing: error), privacy: .public)")
             }
@@ -319,7 +334,7 @@ final class MicTrackRecorder {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            self.file = nil
+            writer.finish()
             try? FileManager.default.removeItem(at: fileURL)
             throw error
         }
@@ -328,7 +343,7 @@ final class MicTrackRecorder {
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        file = nil
+        writer?.finish()
     }
 }
 

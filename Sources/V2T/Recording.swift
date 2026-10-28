@@ -18,6 +18,11 @@ struct Recording: Identifiable, Codable, Equatable {
     /// nil = not set (fall back to the global default), 0 = force auto-detect,
     /// >= 2 = force that count.
     var numSpeakersHint: Int?
+    /// Optional for compatibility with existing libraries. Imported and manually
+    /// named recordings are never automatically renamed.
+    var automaticTitleEligible: Bool?
+    var titleSource: String?
+    var endedAt: Date?
 
     init(
         id: UUID = UUID(),
@@ -29,7 +34,9 @@ struct Recording: Identifiable, Codable, Equatable {
         hasTranscript: Bool = false,
         folderID: UUID? = nil,
         speakerNames: [String: String] = [:],
-        numSpeakersHint: Int? = nil
+        numSpeakersHint: Int? = nil,
+        automaticTitleEligible: Bool? = nil,
+        endedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -41,20 +48,16 @@ struct Recording: Identifiable, Codable, Equatable {
         self.folderID = folderID
         self.speakerNames = speakerNames
         self.numSpeakersHint = numSpeakersHint
+        self.automaticTitleEligible = automaticTitleEligible
+        self.endedAt = endedAt
     }
 
-    /// "Today", "Yesterday", weekday within the last week, else a short date.
+    /// Always show the calendar date, even for today's recordings.
     var dateLabel: String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(createdAt) { return "Today" }
-        if calendar.isDateInYesterday(createdAt) { return "Yesterday" }
-        if let weekAgo = calendar.date(byAdding: .day, value: -6, to: Date()), createdAt > weekAgo {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "EEEE"
-            return formatter.string(from: createdAt)
-        }
         return createdAt.formatted(date: .abbreviated, time: .omitted)
     }
+
+    var timeLabel: String { createdAt.formatted(date: .omitted, time: .shortened) }
 
     var durationLabel: String {
         TranscriptFormatter.timestamp(duration)

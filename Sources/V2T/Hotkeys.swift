@@ -19,6 +19,7 @@ enum AppAudioHotkeys {
 
     private static let toggleRecordingID: UInt32 = 1
     private static let togglePauseID: UInt32 = 2
+    private static let toggleMicrophoneID: UInt32 = 3
 
     static func install(coordinator: RecordingCoordinator) {
         guard !installed else { return }
@@ -29,6 +30,10 @@ enum AppAudioHotkeys {
         }
         actions[togglePauseID] = {
             coordinator.togglePause()
+        }
+
+        actions[toggleMicrophoneID] = {
+            coordinator.appAudio.toggleMicrophone()
         }
 
         var eventType = EventTypeSpec(
@@ -58,6 +63,7 @@ enum AppAudioHotkeys {
 
         register(keyCode: UInt32(kVK_ANSI_R), id: toggleRecordingID)
         register(keyCode: UInt32(kVK_ANSI_P), id: togglePauseID)
+        register(keyCode: UInt32(kVK_ANSI_M), id: toggleMicrophoneID)
     }
 
     private static func register(keyCode: UInt32, id: UInt32) {

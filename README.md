@@ -1,49 +1,54 @@
-# V2T — Voice Memos with real transcription
+# V2T
 
-A native macOS app modeled on Apple Voice Memos, with **speaker diarization** (who said what) using your choice of [ElevenLabs Scribe v2 through fal](https://fal.ai/models/fal-ai/elevenlabs/speech-to-text/scribe-v2) or [Deepgram Nova-3](https://developers.deepgram.com/docs/pre-recorded-audio). Transcripts can be copied as plain text or Markdown.
+A native macOS app for recording calls, reading transcripts, and keeping a searchable meeting library. Audio stays in your local library. Live previews and AI titles run on the Mac; final transcription uses your selected provider: **Deepgram Nova-3** or ElevenLabs Scribe v2 through fal.ai. Saved provider choices and separate Keychain credentials are preserved.
 
-## Features
+## Recording and browsing
 
-- **Recording library** — a permanent recordings-list column with title, date ("Today", "Yesterday", weekday), duration, favorites, and a transcript badge. Stored in `~/Library/Application Support/V2T/Library/`.
-- **Folders** — a collapsible folder sidebar (toolbar sidebar button) with All Recordings, Favorites, and your own folders: create, rename, delete, and move recordings between them; new recordings land in the folder you're viewing.
-- **Recording setup** — click the source summary above Record to open a native popover with **Microphone**, **Application**, and **All Mac Audio** cards. Application mode has a searchable, alphabetically stable list with icons, audio-activity hints, and a selected checkmark. **Include my microphone** is independent of the app/Mac source. The summary makes the selection explicit; an unavailable app never falls back to another app or all Mac audio. Browser capture includes all audio from that browser, not just a meeting tab.
-- **One recording workflow** — the main window, menu-bar panel, and global shortcuts share the same source, mic choice, and active recording. **⌘⌥R** starts/stops; **⌘⌥P** pauses/resumes. Every engine saves into the folder selected at the start of the take, and the saved recording is selected automatically. App/Mac sessions show separate app and microphone meters. Quit is blocked while recording or saving.
-- **App and Mac audio** — Core Audio process taps capture a selected app or the whole system, with optional microphone mixdown and preserved raw tracks. Requires macOS 14.4+ and System Audio Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording). Microphone access is requested only when needed. The menu-bar panel keeps working with the main window closed.
-- **Save recovery** — captures stay in `~/Library/Application Support/V2T/Recovery/` until audio, raw tracks, and metadata are installed successfully. A failed save exposes **Retry Save** and **Show Files** in the main window. Retry also works after relaunch when the capture manifest was saved. Interrupted captures without a manifest remain available for manual import. Metadata and transcript write errors are surfaced instead of reporting success; a failed edit keeps the original audio and editor working file.
-- **Import** — drag audio straight out of Apple Voice Memos (or any m4a/mp3/wav file) into the list, or use the import button.
-- **Playback** — overview waveform with click-to-seek, a zoomed scrubbing waveform view (toggle with the waveform/transcript toolbar button; drag it to scrub), big time counter, ±15 s skip, play/pause, and **Space** to play/pause anywhere (except while typing in a text field).
-- **Options** — playback speed (0.5×–2×) and Skip Silence (V2T precomputes quiet ranges from the waveform and jumps over them).
-- **Search** — the search field matches titles *and* transcript text.
-- **Transcripts** — auto-transcribed on record/import (toggleable). Speaker-labeled blocks with timestamps; long single-speaker turns are split at pauses and sentence ends so every block is a precise seek target; renameable speaker chips; **click any block to move playback there** (right-click for Play from Here / Copy Text); the current block highlights and follows during playback. Word-level timing is stored with each transcript. Recordings transcribed before this feature keep their coarse blocks — right-click → Re-transcribe to upgrade them.
-- **Edit mode** — **Edit Audio** opens the editor. **REPLACE** records your mic over audio from the playhead; **RESUME** appends at the end. **Trim Audio** opens a compact, Voice Memos-style view: drag the yellow handles, then choose **Trim** to keep the selection or **Delete** to remove it. Playback stays separate from editing, and **Undo** remains in the toolbar. **Apply** saves your edits; **Cancel** discards all unsaved audio edits. Leaving trim mode by switching recordings also discards unapplied edits. Trims preserve and retime the transcript, including speaker names; only REPLACE/RESUME require re-transcription. Outside trim mode, **Save Changes** (or switching recordings) saves edits as before.
-- **Share & copy** — share the audio file, or use **Copy Transcript → Copy Markdown / Copy Plain Text**. Markdown includes speaker labels and timestamps and works with any Markdown-compatible app. There is no separate Save Markdown action.
+Click the source summary above Record to choose **Microphone**, **Application**, or **All Mac Audio**. Application mode provides a searchable app list. **Include my microphone** controls whether your mic starts on; you can change it during the recording. The main window, menu bar, and shortcuts share this configuration. An unavailable app must be reselected; it never falls back to another source.
 
-## Requirements
+- Select any saved recording while a call continues. Its transcript and copy controls remain available. A persistent bar provides pause/resume, stop, mic control, and **Show Recording**.
+- Saved recordings open to their transcript. **Copy Transcript** copies speaker names, timestamps, and text; the More menu provides **Copy Markdown**, audio sharing, favorites, and playback options.
+- Library previews and recording headers always show the **actual date and start time**, including today's recordings. Automatic titles never remove this information.
+- Playback and audio editing are unavailable during capture so an old recording cannot leak into the call recording. Reading, copying, searching, and organizing remain available.
+- The recording view emphasizes the live transcript and essential controls. Audio-level meters and large precision timers have been removed. Waveforms remain available for playback, seeking, and audio editing.
 
-- macOS 14 (Sonoma) or later — app-audio capture from the menu bar needs 14.4+
-- Xcode Command Line Tools (`xcode-select --install`) — no Xcode project needed
-- A [fal.ai API key](https://fal.ai/dashboard/keys) or [Deepgram API key](https://console.deepgram.com/) for transcription. Recording and playback do not require a key.
+### Microphone and echo reduction
 
-## Run it
+Use **Mic on / Mic off** in the recording window or persistent bar, the mic button in the menu bar, or **⌘⌥M**. You can enable the mic even if the call started with it off. This controls V2T's recording only; it does not change the meeting app's mute button.
 
-```bash
-git clone --branch main https://github.com/maliikm/V2T.git
-cd V2T
-swift run
-```
+The mic uses macOS voice processing for echo reduction. Keep it off while listening and turn it on when speaking. Muted sections are written as silence, including in the saved raw mic track, so your later speech stays aligned with the call. Pausing removes time from both tracks; enabling the mic after a pause accounts for the removed time.
 
-Or build a double-clickable app bundle (recommended, especially for microphone permission):
+Echo reduction depends on the input/output devices and room. Headphones can still help if speaker bleed remains. Once enabled, the input engine stays running while V2T mutes its saved output; the macOS microphone indicator may remain visible.
 
-```bash
-./Scripts/make-app.sh
-mv V2T.app /Applications/
-```
+Global shortcuts:
 
-Choose your transcription provider and save its API key in **Settings (⌘,)**. Keys are stored separately in macOS Keychain. Existing installations keep fal as the default; provider changes apply only to new requests.
+| Action | Shortcut |
+| --- | --- |
+| Start/stop recording | ⌘⌥R |
+| Pause/resume recording | ⌘⌥P |
+| Include/mute mic in a call recording | ⌘⌥M |
+
+## Live and final transcripts
+
+Live previews use Apple's **on-device** speech recognition. Enable them and select a language in Settings. V2T requests Speech Recognition permission when you record. If the device or selected language does not support on-device recognition, V2T keeps recording audio and explains why the preview is unavailable. It does not silently send live audio to a cloud recognizer.
+
+Call previews distinguish **Call audio** from **My microphone**. They do not reliably identify individual participants. Recognition requests rotate during long recordings, so previews may contain incomplete wording around boundaries. They are a convenience while recording, not the final transcript.
+
+When recording stops, the preview is saved as `live-preview.txt` beside the audio and remains readable/copyable while the final transcript is processing. With the selected provider’s key and automatic transcription enabled, Deepgram Nova-3 or fal’s Scribe v2 produces the final speaker-labeled transcript. Provider/model metadata and transcript history remain available. Deepgram receives a direct upload; fal’s long recordings are chunked with overlap and stitched together.
+
+### Correcting speakers
+
+Name speakers using the fields above the transcript. Each passage has a speaker menu:
+
+- Choose an existing speaker to reassign **that passage**.
+- Use **Reassign All … Passages** to merge a mistaken label into another speaker.
+- **Undo Speaker Change** reverses recent corrections during the current app session.
+
+Corrections are saved to disk, applied to exports, and kept in word timing so trim/delete edits preserve them. Re-transcribing archives the previous transcript and its names, then replaces the transcript and resets speaker names. **Previous Versions** opens the archive in Finder. With fal, supplying the expected speaker count can improve the initial assignment; Deepgram uses automatic speaker detection.
 
 ## Deepgram setup
 
-1. Open Settings → Transcription Provider and select **Deepgram · Nova-3**.
+1. Open Settings → Final Transcript Service and select **Deepgram · Nova-3**.
 2. Paste your Deepgram API key and click **Save Key**. The existing fal key is retained.
 3. Set the Deepgram language code (`en` by default, `es`, or `multi` for supported multilingual conversations). Leave it empty to detect the dominant language. This setting is separate from fal's `eng`/`spa` codes.
 4. Transcribe a short recording. Word timing, speaker renaming, click-to-seek, export, and transcript-preserving trims use the same local format as fal transcripts.
@@ -54,24 +59,57 @@ Deepgram speaker-count hints and audio-event tagging are not implemented; the fa
 
 Changing providers never bulk-transcribes or modifies your library. To compare an existing recording, switch providers and use **Re-transcribe**. Before replacement, V2T archives the previous transcript, recording metadata/speaker names, and a readable Markdown export under `Library/<recording-id>/Transcript History/`. **Previous Versions** opens that folder in Finder (manual comparison, not an in-app restore browser). Speaker names are reset on the new transcript because provider speaker numbers aren't stable identities. The current transcript remains unchanged if the request or archive write fails.
 
-## Transcription accuracy
+## Google Calendar & local AI titles
 
-- Choose between ElevenLabs **Scribe v2** on fal and Deepgram **Nova-3**. Compare representative recordings before choosing a default; accuracy and speaker assignments depend on the audio.
-- With fal, **set the number of speakers** (per recording or in Settings) to provide a diarization hint. Deepgram uses automatic speaker detection.
-- fal's Scribe endpoints cap a single request at 20 minutes, so longer recordings are split into ~19-minute chunks overlapping by 2 minutes, transcribed in parallel, and stitched back together; speaker labels are matched across boundaries using the overlap. If someone is silent through an entire overlap window they can come back as a new "Speaker N" — give both chips the same name and exports read correctly.
-- Trim / Delete retime the existing transcript. Replace/Resume add new speech and require re-transcription.
+V2T connects **directly to Google Calendar**, independently of the macOS Calendar app. It requests read-only access to events and the calendar list. Select which calendars can be used in V2T Settings.
 
-## Verify changes
+For a personal build, configure Google OAuth once:
 
-With Swift 6 installed, run `bash Scripts/test.sh`. It uses isolated temporary libraries and synthetic audio, never your recordings, microphone, Keychain, or transcription account. Tests cover capture/recovery, provider and credential isolation, request parameters, HTTP errors, speaker/word parsing, old transcript compatibility, transcript archives, settings changes during jobs, cancellation/restart races, trim boundaries, real audio keep/remove/undo/save operations, transcript retiming, and Markdown formatting. Network responses are mocked; a successful live transcription with your own key is still a manual smoke check.
+1. Create or choose a project in [Google Cloud Console](https://console.cloud.google.com/).
+2. Enable **Google Calendar API** and configure the OAuth consent screen. If the app is in testing, add your Google account as a test user.
+3. Create an OAuth client with application type **Desktop app**, and download its JSON file.
+4. In V2T Settings → Google Calendar, choose **Import Desktop OAuth Client JSON…**, then **Connect Google Calendar…**.
+5. Complete Google sign-in in your browser and select the calendars to use.
 
-Before relying on a long recording, run these hardware smoke checks on your Mac:
+The app uses a loopback callback, PKCE, and a random state value. Client configuration and access/refresh tokens stay in Keychain; do not commit the downloaded JSON to this repository. **Disconnect** removes stored tokens from the Mac. You can also revoke the app's access from your Google account. See [Google's desktop OAuth documentation](https://developers.google.com/identity/protocols/oauth2/native-app).
 
-1. Record a short microphone take; pause/resume using ⌘⌥P and stop with ⌘⌥R. Confirm it appears in the selected folder and plays back.
-2. Select a playing app, then try mic off and mic on. Check the separate meters and both sides of the saved audio. Repeat with All Mac Audio.
-3. Change the source in the menu bar and verify the main-window summary matches. Quit the selected application before starting; V2T should require a new selection, never broaden capture.
-4. Close the main window, start/stop from the menu bar, then reopen V2T and check the saved item. Test microphone denial, system-audio denial, and your usual output-device switch.
-5. If a real save fails, free disk space or restore write access, then use Retry Save. Keep the Recovery files until playback of the recovered item is verified.
+With **Automatically title new recordings** enabled, V2T checks events overlapping the actual recording period and uses transcript content to generate a concise title with Apple's on-device Foundation Models framework. A title can improve after the final transcript arrives. Calendar context stays out of cloud transcription requests. Renaming a recording yourself prevents subsequent automatic changes; imports and older library items are not automatically renamed.
+
+Local AI requires **macOS 26+, an Apple Intelligence-capable Mac, and an available Apple Intelligence model**. Settings reports availability. When the model is unavailable, an unambiguous calendar match can still supply a title; ambiguous matches keep the existing title. Calendar failures do not interrupt recording or transcription.
+
+## Other library features
+
+- Search titles and transcript text; favorites and folders help organize recordings.
+- Import audio by dragging a file into the list or using Import Audio.
+- Playback includes click-to-seek, ±15 seconds, speed adjustment, and Skip Silence.
+- **Edit Audio** supports microphone replacement/appending and a compact trim view. Drag the yellow handles and choose **Trim** to keep the selection or **Delete** to remove it. **Apply** saves; **Cancel** or navigating away discards unapplied trim edits. Undo, transcript retiming, and speaker names are preserved. Replacement/appending requires a new final transcript.
+- Recordings live in `~/Library/Application Support/V2T/Library/`. Call captures retain separate app and mic tracks alongside the mix.
+- Menu bar capture works with the main window closed. Quit is blocked during capture or saving.
+- Captures stay in `~/Library/Application Support/V2T/Recovery/` until audio, raw tracks, and metadata are saved successfully. **Retry Save** and **Show Files** remain available after a failed save; interrupted captures without a manifest can be imported manually. A failed edit keeps the original audio and working file.
+
+## Build and run
+
+- macOS 14+; app/system audio capture requires macOS 14.4+ and System Audio Recording permission.
+- Xcode Command Line Tools. Build with a macOS 26+ SDK to include local AI title generation; older SDKs omit it.
+- A [Deepgram API key](https://console.deepgram.com/) or [fal.ai API key](https://fal.ai/dashboard/keys) for final transcription. Live previews, recording, browsing, and local AI do not require that key.
+
+```sh
+git clone --branch main https://github.com/maliikm/V2T.git
+cd V2T
+./Scripts/make-app.sh
+```
+
+The script builds `V2T.app`, generates its **V2T text icon** at native macOS sizes, adds permission descriptions, and signs it locally. Move the app to `/Applications` if desired. Building the bundle is recommended for microphone and speech permission prompts. Choose the final transcription provider and save its key in Settings. Existing provider preferences remain unchanged.
+
+To select a particular installed SDK, set `SDKROOT` when building. Tests use Swift Testing (Swift 6+):
+
+```sh
+bash Scripts/test.sh
+```
+
+Tests use isolated libraries, injected credentials, and mocked network responses. They cover provider/key isolation, Deepgram parsing and request options, cancellation races, recovery and transactional saves, transcript archives, trim/apply/cancel behavior, mute/pause timing, stereo silence, speaker correction persistence/retiming/undo, calendar matching, manual-title protection, absolute dates, OAuth PKCE/callback validation, calendar pagination/filtering, token refresh, and disconnect races. Live audio devices, Google consent, and Apple Intelligence availability also need a manual check on the target Mac; no real account credentials or microphone audio are used by the automated tests.
+
+See [the design review](Docs/DESIGN_REVIEW.md) for the interface decisions and [the manual validation checklist](Docs/MANUAL_CHECKS.md) for device/account-dependent checks.
 
 ## Costs
 

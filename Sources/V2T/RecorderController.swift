@@ -2,16 +2,17 @@ import AVFoundation
 import Foundation
 
 /// In-app voice recording (the red button), capturing AAC m4a like Voice
-/// Memos. While a session is active it publishes live meter levels for the
-/// recording screen, and supports pause/resume before finishing with stop().
+/// Memos, with an optional on-device transcript preview and pause/resume.
 @MainActor
 final class RecorderController: NSObject, ObservableObject {
+    let liveTranscript = LiveTranscriber()
+    private var previewInput: MicrophonePreviewInput?
+    private var livePreview = ""
+    private weak var appSettings: AppSettings?
     /// True for the whole session, including while paused.
     @Published private(set) var isRecording = false
     @Published private(set) var isPaused = false
     @Published private(set) var elapsed: Double = 0
-    /// Live microphone levels (0...1), sampled ~20×/second while recording.
-    @Published private(set) var levels: [Float] = []
     @Published private(set) var sessionTitle = ""
     @Published private(set) var sessionStartedAt: Date?
     @Published var lastError: String?
@@ -28,10 +29,11 @@ final class RecorderController: NSObject, ObservableObject {
     @Published private(set) var isStarting = false
     private var folderID: UUID?
 
-    func start(store: LibraryStore, folderID: UUID? = nil, onFinished: ((Recording) -> Void)? = nil) {
+    func start(store: LibraryStore, settings: AppSettings? = nil, folderID: UUID? = nil, onFinished: ((Recording) -> Void)? = nil) {
         guard !isRecording, !isStarting, !isSaving else { return }
         isStarting = true
         self.store = store
+        self.appSettings = settings
         self.folderID = folderID
         self.onFinished = onFinished
         Task {
@@ -59,7 +61,6 @@ final class RecorderController: NSObject, ObservableObject {
             let url = directory.appendingPathComponent("audio.m4a")
             let recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder.delegate = self
-            recorder.isMeteringEnabled = true
             guard recorder.record() else {
                 lastError = "Couldn't start recording."
                 return
@@ -70,11 +71,20 @@ final class RecorderController: NSObject, ObservableObject {
             sessionStartedAt = startedAt
             sessionTitle = store.nextRecordingTitle()
             elapsed = 0
-            levels = []
             isPaused = false
             isRecording = true
             lastError = nil
             startTimer()
+            livePreview = ""
+            let previewEnabled = appSettings?.liveTranscriptionEnabled ?? false
+            liveTranscript.start(enabled: previewEnabled,
+                                 locale: appSettings?.liveTranscriptionLocale ?? Locale.current.identifier,
+                                 includesCall: false) { [weak self] in self?.elapsed ?? 0 }
+            if previewEnabled {
+                let input = MicrophonePreviewInput()
+                do { try input.start(sink: liveTranscript.micSink); previewInput = input }
+                catch { lastError = "Live preview input is unavailable. Audio is still recording." }
+            }
         } catch {
             lastError = "Couldn't start recording: \(error.localizedDescription)"
         }
@@ -83,6 +93,7 @@ final class RecorderController: NSObject, ObservableObject {
     func pause() {
         guard isRecording, !isPaused, let recorder else { return }
         recorder.pause()
+        liveTranscript.pause()
         elapsed = recorder.currentTime
         isPaused = true
     }
@@ -91,6 +102,7 @@ final class RecorderController: NSObject, ObservableObject {
         guard isRecording, isPaused, let recorder else { return }
         if recorder.record() {
             isPaused = false
+            liveTranscript.resume()
         } else {
             lastError = "Couldn't resume recording."
         }
@@ -103,6 +115,9 @@ final class RecorderController: NSObject, ObservableObject {
         isSaving = true
         isPaused = false
         stopTimer()
+        previewInput?.stop()
+        previewInput = nil
+        livePreview = liveTranscript.stop()
         recorder.stop() // finalization continues in the delegate callback
     }
 
@@ -116,6 +131,9 @@ final class RecorderController: NSObject, ObservableObject {
         let finishedElapsed = elapsed
         let finishedTitle = sessionTitle
         let callback = onFinished
+        previewInput?.stop()
+        previewInput = nil
+        if livePreview.isEmpty { livePreview = liveTranscript.stop() }
         recorder = nil
         tempURL = nil
         onFinished = nil
@@ -134,9 +152,10 @@ final class RecorderController: NSObject, ObservableObject {
             duration: finishedElapsed,
             startedAt: startedAt,
             title: finishedTitle,
-            folderID: folderID
+            folderID: folderID, endedAt: Date()
         )
         if let recording {
+            store.saveLivePreview(livePreview, for: recording.id)
             callback?(recording)
         } else {
             lastError = store.lastError ?? "Captured files are kept in Recovery. Open V2T to retry saving."
@@ -145,7 +164,7 @@ final class RecorderController: NSObject, ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
@@ -163,11 +182,6 @@ final class RecorderController: NSObject, ObservableObject {
         guard let recorder, isRecording else { return }
         guard !isPaused else { return }
         elapsed = recorder.currentTime
-        recorder.updateMeters()
-        let db = recorder.averagePower(forChannel: 0)
-        // Perceptual mapping of -60dB...0dB onto 0...1.
-        let level = max(0, min(1, (db + 60) / 60))
-        levels.append(level)
     }
 }
 

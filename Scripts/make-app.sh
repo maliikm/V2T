@@ -6,13 +6,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Building release binary…"
-swift build -c release
+BUILD_ARGS=("$@")
+if [[ -n "${SDKROOT:-}" ]]; then BUILD_ARGS+=(--sdk "$SDKROOT"); fi
+swift build -c release "${BUILD_ARGS[@]}"
 
 APP=V2T.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-cp .build/release/V2T "$APP/Contents/MacOS/V2T"
+BIN_DIR=$(swift build -c release --show-bin-path "${BUILD_ARGS[@]}")
+cp "$BIN_DIR/V2T" "$APP/Contents/MacOS/V2T"
+ICONSET=$(mktemp -d)/V2T.iconset
+trap 'rm -rf "${ICONSET%/*}"' EXIT
+swift Scripts/make-icon.swift "$ICONSET"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/V2T.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -29,10 +36,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>V2T</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>V2T.icns</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -41,6 +50,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>V2T records voice memos with your microphone.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>V2T records the audio of apps you choose (for example meeting apps) so it can transcribe them.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>V2T uses on-device speech recognition to show a live transcript while you record.</string>
     <key>NSHumanReadableCopyright</key>
     <string></string>
 </dict>

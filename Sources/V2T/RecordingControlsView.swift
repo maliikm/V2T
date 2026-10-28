@@ -19,6 +19,9 @@ struct RecordingControlsView: View {
             .popover(isPresented: $showingSetup, arrowEdge: .top) {
                 RecordingSetupView { showingSetup = false }.environmentObject(capture)
             }
+            if capture.appAudio.isRecording {
+                MicrophoneCaptureButton().environmentObject(capture.appAudio)
+            }
             RecordingTransportView()
             if let error = capture.error {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -90,7 +93,7 @@ struct RecordingSetupView: View {
                 Toggle(isOn: $capture.configuration.includesMicrophone) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Include my microphone")
-                        Text("Capture your side of the conversation, too.").font(.caption).foregroundStyle(.secondary)
+                        Text("Start with your mic on. You can toggle it during the recording.").font(.caption).foregroundStyle(.secondary)
                     }
                 }.toggleStyle(.switch)
             }

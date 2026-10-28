@@ -199,7 +199,8 @@ private struct RecordingRow: View {
                 }
             }
             HStack(spacing: 6) {
-                Text(recording.dateLabel)
+                Text("\(recording.dateLabel) · \(recording.timeLabel)")
+                    .fixedSize(horizontal: false, vertical: true)
                 if isTranscribing {
                     ProgressView().controlSize(.mini)
                 } else if recording.hasTranscript {
@@ -210,7 +211,7 @@ private struct RecordingRow: View {
                 Text(recording.durationLabel)
                     .monospacedDigit()
             }
-            .font(.subheadline)
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)

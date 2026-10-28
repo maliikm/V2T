@@ -11,16 +11,15 @@ import Foundation
 /// permission (a silent denial is detected by the silence watchdog).
 @MainActor
 final class AppAudioRecorder: NSObject, ObservableObject {
+    let liveTranscript = LiveTranscriber()
     @Published private(set) var isRecording = false
     @Published private(set) var isPaused = false
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var targetName = ""
     /// True when the current session also records the microphone.
     @Published private(set) var sessionHasMic = false
-    /// Live tap levels (0...1), ~20/s — drives the main window's live waveform.
-    @Published private(set) var levels: [Float] = []
-    @Published private(set) var appLevel: Float = 0
-    @Published private(set) var micLevel: Float = 0
+    @Published private(set) var isMicEnabled = false
+    @Published private(set) var isChangingMicrophone = false
     @Published private(set) var availableApps: [AudioProcess] = []
     @Published private(set) var isSaving = false
     @Published var lastError: String?
@@ -90,6 +89,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         app: AudioProcess?,
         withMic: Bool,
         store: LibraryStore,
+        settings: AppSettings,
         folderID: UUID? = nil,
         onFinished: ((Recording) -> Void)? = nil
     ) {
@@ -108,13 +108,16 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             target: target,
             baseDirectory: store.recoveryRootURL
         )
+        session.callAudioSink = liveTranscript.callSink
+        session.micAudioSink = liveTranscript.micSink
         session.onSuspectedPermissionDenial = { [weak self] in
             self?.lastError = Self.permissionMessage
         }
         let wantsMic = withMic
         do {
-            try session.start(withMic: wantsMic)
+            try session.start()
         } catch {
+            session.stop()
             lastError = "Couldn't start capture: \(error.localizedDescription)"
             try? FileManager.default.removeItem(at: session.directory)
             return
@@ -123,37 +126,72 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         self.session = session
         targetName = target.displayName
         sessionHasMic = session.hasMicTrack
+        isMicEnabled = false
         startedAt = Date()
         accumulated = 0
         segmentStartedAt = startedAt
         elapsed = 0
-        levels = []
-        appLevel = 0
-        micLevel = 0
         isPaused = false
         isRecording = true
         startTimer()
+        liveTranscript.start(enabled: settings.liveTranscriptionEnabled,
+                             locale: settings.liveTranscriptionLocale, includesCall: true) { [weak self] in
+            self?.elapsed ?? 0
+        }
 
-        if wantsMic && !session.hasMicTrack {
-            lastError = "Microphone track couldn't start — recording app audio only."
+        if wantsMic { setMicrophoneEnabled(true) }
+    }
+
+    func toggleMicrophone() {
+        setMicrophoneEnabled(!isMicEnabled)
+    }
+
+    /// Permission can be requested after capture starts. A late response must
+    /// never enable the mic in a stopped or replacement session.
+    func setMicrophoneEnabled(_ enabled: Bool) {
+        guard #available(macOS 14.4, *), let session, isRecording,
+              !isChangingMicrophone, enabled != isMicEnabled else { return }
+        if !enabled {
+            try? session.setMicrophoneEnabled(false)
+            isMicEnabled = false
+            liveTranscript.setMicrophoneEnabled(false)
+            return
+        }
+        isChangingMicrophone = true
+        Task {
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            guard self.session === session, self.isRecording else { return }
+            defer { self.isChangingMicrophone = false }
+            guard granted else {
+                self.lastError = "Microphone access is off. Enable V2T in System Settings → Privacy & Security → Microphone. The call is still recording."
+                return
+            }
+            do {
+                try session.setMicrophoneEnabled(true)
+                self.isMicEnabled = true
+                self.sessionHasMic = true
+                self.liveTranscript.setMicrophoneEnabled(true)
+            } catch {
+                self.lastError = "Couldn't enable the microphone: \(error.localizedDescription). The call is still recording."
+            }
         }
     }
 
     func pause() {
         guard #available(macOS 14.4, *), let session, isRecording, !isPaused else { return }
         session.pause()
+        liveTranscript.pause()
         if let segmentStartedAt {
             accumulated += Date().timeIntervalSince(segmentStartedAt)
         }
         segmentStartedAt = nil
         isPaused = true
-        appLevel = 0
-        micLevel = 0
     }
 
     func resume() {
         guard #available(macOS 14.4, *), let session, isRecording, isPaused else { return }
         session.resume()
+        liveTranscript.resume()
         segmentStartedAt = Date()
         isPaused = false
     }
@@ -162,11 +200,15 @@ final class AppAudioRecorder: NSObject, ObservableObject {
         guard #available(macOS 14.4, *), let session, isRecording else { return }
         isRecording = false
         isPaused = false
+        isMicEnabled = false
+        isChangingMicrophone = false
         stopTimer()
         session.stop()
+        let livePreview = liveTranscript.stop()
         self.session = nil
 
         let duration = session.activeDuration
+        let endedAt = Date()
         let title = "\(targetName) \(startedAt.formatted(date: .omitted, time: .shortened))"
         let appURL = session.appFileURL
         let micURL = session.hasMicTrack ? session.micFileURL : nil
@@ -215,13 +257,14 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             if repairedAppURL != appURL { tracks["track-app-raw.m4a"] = appURL }
             let recording = self.store?.addRecordedFile(
                 at: finalURL, duration: duration, startedAt: startDate, title: title,
-                folderID: destinationFolder, rawTracks: tracks
+                folderID: destinationFolder, rawTracks: tracks, endedAt: endedAt
             )
             // LibraryStore owns cleanup, after all audio and metadata writes
             // succeed. Failures leave the complete capture available for retry.
             if recording == nil {
                 self.lastError = self.store?.lastError ?? "Captured files are kept in Recovery."
             }
+            if let recording { self.store?.saveLivePreview(livePreview, for: recording.id) }
             self.isSaving = false
             if let recording { finished?(recording) }
         }
@@ -231,8 +274,7 @@ final class AppAudioRecorder: NSObject, ObservableObject {
 
     private func startTimer() {
         stopTimer()
-        // 20 Hz: matches the live waveform's expected sample rate.
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
@@ -247,11 +289,6 @@ final class AppAudioRecorder: NSObject, ObservableObject {
             elapsed = accumulated + Date().timeIntervalSince(segmentStartedAt)
         } else {
             elapsed = accumulated
-        }
-        if #available(macOS 14.4, *), let session, !isPaused {
-            appLevel = session.takeRecentPeak()
-            micLevel = session.takeRecentMicPeak()
-            levels.append(appLevel)
         }
     }
 

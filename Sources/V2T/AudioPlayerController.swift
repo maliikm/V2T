@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import Foundation
 
 /// Playback for the selected recording: play/pause, seek, ±15s, playback
@@ -10,6 +11,7 @@ final class AudioPlayerController: NSObject, ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
+    @Published private(set) var isPlaybackBlocked = false
 
     @Published var rate: Double {
         didSet {
@@ -27,6 +29,20 @@ final class AudioPlayerController: NSObject, ObservableObject {
     private var player: AVAudioPlayer?
     private var loadedURL: URL?
     private var timer: Timer?
+    private var captureObservation: AnyCancellable?
+
+    /// Keep every playback entry point (including transcript menus and Space)
+    /// quiet throughout capture, even while it is paused or the window is closed.
+    func observeCapture(recorder: RecorderController, appAudio: AppAudioRecorder) {
+        guard captureObservation == nil else { return }
+        captureObservation = recorder.$isRecording.combineLatest(appAudio.$isRecording, recorder.$isStarting)
+            .map { $0 || $1 || $2 }
+            .removeDuplicates()
+            .sink { [weak self] capturing in
+                self?.isPlaybackBlocked = capturing
+                if capturing { self?.pause() }
+            }
+    }
 
     override init() {
         let defaults = UserDefaults.standard
@@ -89,7 +105,7 @@ final class AudioPlayerController: NSObject, ObservableObject {
     }
 
     func play() {
-        guard let player else { return }
+        guard !isPlaybackBlocked, let player else { return }
         if player.currentTime >= player.duration - 0.05 {
             player.currentTime = 0
         }
