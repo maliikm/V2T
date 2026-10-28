@@ -8,7 +8,11 @@ final class LiveAudioSink {
     private let lock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var format: AVAudioFormat?
-    var onFormatChange: (() -> Void)?
+    private var formatChangeHandler: (() -> Void)?
+    var onFormatChange: (() -> Void)? {
+        get { lock.withLock { formatChangeHandler } }
+        set { lock.withLock { formatChangeHandler = newValue } }
+    }
 
     func replaceRequest(_ newRequest: SFSpeechAudioBufferRecognitionRequest?) {
         lock.withLock {
